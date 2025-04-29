@@ -1,11 +1,11 @@
-package main // Changed from cli to main
+package cli
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"podman-compose-manager/internal/discovery"
-	"podman-compose-manager/internal/runner"
+	"bucket-manager/internal/discovery"
+	"bucket-manager/internal/runner"
 	"strings"
 
 	"github.com/fatih/color"
@@ -58,13 +58,13 @@ func projectCompletionFunc(cmd *cobra.Command, args []string, toComplete string)
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "pcm-cli",
-	Short: "Podman Compose Manager CLI",
+	Use:   "bm",
+	Short: "Bucket Manager CLI",
 	Long:  `A command-line interface to manage multiple Podman Compose projects found in ~/bucket or ~/compose-bucket.`,
 }
 
-// Execute is called by main.main().
-func Execute() {
+// RunCLI executes the Cobra CLI application.
+func RunCLI() {
 	err := rootCmd.Execute()
 	if err != nil {
 		os.Exit(1)
@@ -104,7 +104,7 @@ var listCmd = &cobra.Command{
 
 var upCmd = &cobra.Command{
 	Use:               "up [project-name]",
-	Short:             "Run 'podman compose pull' and 'podman compose up -d' for a project",
+	Short:             "Run 'pull' and 'up -d' for a project",
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -195,7 +195,6 @@ Otherwise, shows status for all discovered projects.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		rootDir := getComposeRootOrExit()
 		var projectsToScan []discovery.Project
-		// var err error // Removed unused variable
 
 		allProjects, findErr := discovery.FindProjects(rootDir)
 		if findErr != nil {
@@ -255,9 +254,6 @@ Otherwise, shows status for all discovered projects.`,
 					}
 				}
 			}
-			// else if statusInfo.OverallStatus == runner.StatusDown {
-			// fmt.Println("  (No running containers)")
-			// }
 		}
 	},
 }
@@ -267,21 +263,6 @@ Otherwise, shows status for all discovered projects.`,
 func runSequence(projectName, rootDir string, sequence []runner.CommandStep) error {
 	for _, step := range sequence {
 		stepColor.Printf("\n--- Running Step: %s ---\n", step.Name)
-
-		// Adjust step directory only if it's project-specific (Dir is set in sequence definition)
-		// and not a global command (like system prune).
-		if step.Dir != "" {
-			// The step.Dir from sequence definition is the *full project path* already.
-			// We don't need to join with rootDir here. The sequence functions
-			// (UpSequence, DownSequence etc.) should provide the correct full path.
-			// Let's double-check runner.go... yes, they use projectPath directly.
-			// However, the *old* logic here was joining rootDir + projectName.
-			// The new logic in upCmd etc. correctly calculates projectPath = rootDir + projectName.
-			// The sequence functions *receive* this correct full projectPath.
-			// So, the step.Dir *is* the correct full path. No join needed here.
-			// The check `if step.Dir != ""` is sufficient to distinguish project-specific
-			// commands from global ones (like prune).
-		}
 
 		outChan, errChan := runner.StreamCommand(step)
 

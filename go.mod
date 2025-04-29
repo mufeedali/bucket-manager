@@ -1,4 +1,4 @@
-module podman-compose-manager
+module bucket-manager
 
 go 1.24.2
 

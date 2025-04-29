@@ -68,7 +68,7 @@ func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 			}
 			if err := scanner.Err(); err != nil {
 				// Log scanner error, but don't send it as the primary command error
-				fmt.Fprintf(io.Discard, "stdout scanner error for step '%s': %v\n", step.Name, err) // Discard for now
+				fmt.Fprintf(io.Discard, "stdout scanner error for step '%s': %v\n", step.Name, err)
 			}
 		}()
 
@@ -80,7 +80,7 @@ func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 			}
 			if err := scanner.Err(); err != nil {
 				// Log scanner error
-				fmt.Fprintf(io.Discard, "stderr scanner error for step '%s': %v\n", step.Name, err) // Discard for now
+				fmt.Fprintf(io.Discard, "stderr scanner error for step '%s': %v\n", step.Name, err)
 			}
 		}()
 

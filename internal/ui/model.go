@@ -2,8 +2,8 @@ package ui
 
 import (
 	"fmt"
-	"podman-compose-manager/internal/discovery"
-	"podman-compose-manager/internal/runner"
+	"bucket-manager/internal/discovery"
+	"bucket-manager/internal/runner"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -388,7 +388,7 @@ func (m *model) View() string {
 
 	var header, body, footer string
 
-	header = titleStyle.Render("Podman Compose Manager TUI") + "\n"
+	header = titleStyle.Render("Bucket Manager TUI") + "\n"
 
 	bodyContent := strings.Builder{}
 	switch m.currentState {

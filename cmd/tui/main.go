@@ -1,14 +1,15 @@
-package main
+package tui
 
 import (
 	"fmt"
 	"os"
-	"podman-compose-manager/internal/ui"
+	"bucket-manager/internal/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func main() {
+// RunTUI initializes and runs the Bubble Tea TUI application.
+func RunTUI() {
 	m := ui.InitialModel()
 	p := tea.NewProgram(&m)
 	if _, err := p.Run(); err != nil {
