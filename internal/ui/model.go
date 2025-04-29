@@ -4,9 +4,7 @@ import (
 	"fmt"
 	"podman-compose-manager/internal/discovery"
 	"podman-compose-manager/internal/runner"
-	// "path/filepath" // Removed unused import
 	"strings"
-	// "time" // Removed unused import
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -132,9 +130,6 @@ func (m *model) Init() tea.Cmd { // Changed to pointer receiver
 	// Still load projects on startup
 	return findProjectsCmd()
 }
-
-// NOTE: The model struct definition was already updated earlier.
-// The duplicate definition below is removed.
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) { // Changed to pointer receiver
 	var cmds []tea.Cmd // Use a slice for batching commands
@@ -397,7 +392,6 @@ func (m *model) View() string { // Changed to pointer receiver
 		body = bodyContent.String()
 	}
 
-
 	// --- Footer ---
 	footerContent := strings.Builder{}
 	footerContent.WriteString("\n") // Separator line
@@ -438,5 +432,3 @@ func (m *model) View() string { // Changed to pointer receiver
 
 	return finalView
 }
-
-// Removed unused helper comment related to filepath
