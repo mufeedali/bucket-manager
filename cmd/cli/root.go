@@ -1,11 +1,14 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2025 Mufeed Ali
+
 package cli
 
 import (
+	"bucket-manager/internal/discovery"
+	"bucket-manager/internal/runner"
 	"fmt"
 	"os"
 	"path/filepath"
-	"bucket-manager/internal/discovery"
-	"bucket-manager/internal/runner"
 	"strings"
 
 	"github.com/fatih/color"

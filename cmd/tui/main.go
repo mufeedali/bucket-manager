@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2025 Mufeed Ali
+
 package tui
 
 import (
+	"bucket-manager/internal/ui"
 	"fmt"
 	"os"
-	"bucket-manager/internal/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

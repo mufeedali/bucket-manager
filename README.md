@@ -106,3 +106,7 @@ The TUI provides an interactive way to view project status and trigger actions l
 ## Project Discovery
 
 The tool looks for directories containing a `compose.yaml` or `compose.yml` file within `~/bucket` and `~/compose-bucket`. The first directory found containing projects will be used as the root.
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.

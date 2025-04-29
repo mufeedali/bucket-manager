@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2025 Mufeed Ali
+
 package ui
 
 import (
-	"fmt"
 	"bucket-manager/internal/discovery"
 	"bucket-manager/internal/runner"
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
