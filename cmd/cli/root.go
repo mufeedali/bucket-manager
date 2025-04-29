@@ -23,12 +23,26 @@ var (
 	statusErrorColor   = color.New(color.FgMagenta)
 )
 
+// getComposeRootOrExit gets the compose root directory or prints an error and exits.
+func getComposeRootOrExit() string {
+	rootDir, err := discovery.GetComposeRootDirectory()
+	if err != nil {
+		errorColor.Fprintf(os.Stderr, "Error finding compose directory: %v\n", err)
+		os.Exit(1)
+	}
+	return rootDir
+}
+
 // projectCompletionFunc provides dynamic completion for project names.
 func projectCompletionFunc(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	projects, err := discovery.FindProjects("/home/ubuntu/bucket")
+	rootDir, err := discovery.GetComposeRootDirectory()
 	if err != nil {
-		// Log error to stderr for debugging, but don't fail completion
-		fmt.Fprintf(os.Stderr, "completion error finding projects: %v\n", err)
+		fmt.Fprintf(os.Stderr, "completion error getting root dir: %v\n", err)
+		return nil, cobra.ShellCompDirectiveError
+	}
+	projects, err := discovery.FindProjects(rootDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "completion error finding projects in %s: %v\n", rootDir, err)
 		return nil, cobra.ShellCompDirectiveError
 	}
 
@@ -46,7 +60,7 @@ func projectCompletionFunc(cmd *cobra.Command, args []string, toComplete string)
 var rootCmd = &cobra.Command{
 	Use:   "pcm-cli",
 	Short: "Podman Compose Manager CLI",
-	Long:  `A command-line interface to manage multiple Podman Compose projects found in /home/ubuntu/bucket.`,
+	Long:  `A command-line interface to manage multiple Podman Compose projects found in ~/bucket or ~/compose-bucket.`,
 }
 
 // Execute is called by main.main().
@@ -71,13 +85,14 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List discovered Podman Compose projects",
 	Run: func(cmd *cobra.Command, args []string) {
-		projects, err := discovery.FindProjects("/home/ubuntu/bucket")
+		rootDir := getComposeRootOrExit()
+		projects, err := discovery.FindProjects(rootDir)
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error finding projects: %v\n", err)
+			errorColor.Fprintf(os.Stderr, "Error finding projects in %s: %v\n", rootDir, err)
 			os.Exit(1)
 		}
 		if len(projects) == 0 {
-			fmt.Println("No Podman Compose projects found in /home/ubuntu/bucket.")
+			fmt.Printf("No Podman Compose projects found in %s.\n", rootDir)
 			return
 		}
 		statusColor.Println("Discovered projects:")
@@ -88,16 +103,24 @@ var listCmd = &cobra.Command{
 }
 
 var upCmd = &cobra.Command{
-	Use:   "up [project-name]",
-	Short: "Run 'podman compose pull' and 'podman compose up -d' for a project",
-	Args:  cobra.ExactArgs(1),
+	Use:               "up [project-name]",
+	Short:             "Run 'podman compose pull' and 'podman compose up -d' for a project",
+	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
+		rootDir := getComposeRootOrExit()
 		projectName := args[0]
-		projectPath := filepath.Join("/home/ubuntu/bucket", projectName)
-		statusColor.Printf("Executing 'up' action for project: %s\n", projectName)
+		projectPath := filepath.Join(rootDir, projectName)
+		// Verify project exists before running sequence
+		if _, err := os.Stat(filepath.Join(projectPath, "compose.yaml")); os.IsNotExist(err) {
+			if _, errYml := os.Stat(filepath.Join(projectPath, "compose.yml")); os.IsNotExist(errYml) {
+				errorColor.Fprintf(os.Stderr, "Error: Project '%s' not found or missing compose file in %s.\n", projectName, projectPath)
+				os.Exit(1)
+			}
+		}
+		statusColor.Printf("Executing 'up' action for project: %s (in %s)\n", projectName, rootDir)
 		sequence := runner.UpSequence(projectPath)
-		err := runSequence(projectName, sequence)
+		err := runSequence(projectName, rootDir, sequence)
 		if err != nil {
 			errorColor.Fprintf(os.Stderr, "\n'up' action failed for %s: %v\n", projectName, err)
 			os.Exit(1)
@@ -107,16 +130,24 @@ var upCmd = &cobra.Command{
 }
 
 var downCmd = &cobra.Command{
-	Use:   "down [project-name]",
-	Short: "Run 'podman compose down' for a project",
-	Args:  cobra.ExactArgs(1),
+	Use:               "down [project-name]",
+	Short:             "Run 'podman compose down' for a project",
+	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
+		rootDir := getComposeRootOrExit()
 		projectName := args[0]
-		projectPath := filepath.Join("/home/ubuntu/bucket", projectName)
-		statusColor.Printf("Executing 'down' action for project: %s\n", projectName)
+		projectPath := filepath.Join(rootDir, projectName)
+		// Verify project exists
+		if _, err := os.Stat(filepath.Join(projectPath, "compose.yaml")); os.IsNotExist(err) {
+			if _, errYml := os.Stat(filepath.Join(projectPath, "compose.yml")); os.IsNotExist(errYml) {
+				errorColor.Fprintf(os.Stderr, "Error: Project '%s' not found or missing compose file in %s.\n", projectName, projectPath)
+				os.Exit(1)
+			}
+		}
+		statusColor.Printf("Executing 'down' action for project: %s (in %s)\n", projectName, rootDir)
 		sequence := runner.DownSequence(projectPath)
-		err := runSequence(projectName, sequence)
+		err := runSequence(projectName, rootDir, sequence)
 		if err != nil {
 			errorColor.Fprintf(os.Stderr, "\n'down' action failed for %s: %v\n", projectName, err)
 			os.Exit(1)
@@ -126,16 +157,24 @@ var downCmd = &cobra.Command{
 }
 
 var refreshCmd = &cobra.Command{
-	Use:   "refresh [project-name]",
-	Short: "Run 'pull', 'down', 'up', and 'prune' for a project",
-	Args:  cobra.ExactArgs(1),
+	Use:               "refresh [project-name]",
+	Short:             "Run 'pull', 'down', 'up', and 'prune' for a project",
+	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
+		rootDir := getComposeRootOrExit()
 		projectName := args[0]
-		projectPath := filepath.Join("/home/ubuntu/bucket", projectName)
-		statusColor.Printf("Executing 'refresh' action for project: %s\n", projectName)
+		projectPath := filepath.Join(rootDir, projectName)
+		// Verify project exists
+		if _, err := os.Stat(filepath.Join(projectPath, "compose.yaml")); os.IsNotExist(err) {
+			if _, errYml := os.Stat(filepath.Join(projectPath, "compose.yml")); os.IsNotExist(errYml) {
+				errorColor.Fprintf(os.Stderr, "Error: Project '%s' not found or missing compose file in %s.\n", projectName, projectPath)
+				os.Exit(1)
+			}
+		}
+		statusColor.Printf("Executing 'refresh' action for project: %s (in %s)\n", projectName, rootDir)
 		sequence := runner.RefreshSequence(projectPath)
-		err := runSequence(projectName, sequence)
+		err := runSequence(projectName, rootDir, sequence)
 		if err != nil {
 			errorColor.Fprintf(os.Stderr, "\n'refresh' action failed for %s: %v\n", projectName, err)
 			os.Exit(1)
@@ -154,16 +193,18 @@ Otherwise, shows status for all discovered projects.`,
 	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
+		rootDir := getComposeRootOrExit()
 		var projectsToScan []discovery.Project
-		var err error
+		// var err error // Removed unused variable
+
+		allProjects, findErr := discovery.FindProjects(rootDir)
+		if findErr != nil {
+			errorColor.Fprintf(os.Stderr, "Error finding projects in %s: %v\n", rootDir, findErr)
+			os.Exit(1)
+		}
 
 		if len(args) == 1 {
 			projectName := args[0]
-			allProjects, findErr := discovery.FindProjects("/home/ubuntu/bucket")
-			if findErr != nil {
-				errorColor.Fprintf(os.Stderr, "Error finding projects: %v\n", findErr)
-				os.Exit(1)
-			}
 			found := false
 			for _, p := range allProjects {
 				if p.Name == projectName {
@@ -173,22 +214,18 @@ Otherwise, shows status for all discovered projects.`,
 				}
 			}
 			if !found {
-				errorColor.Fprintf(os.Stderr, "Error: Project '%s' not found.\n", projectName)
+				errorColor.Fprintf(os.Stderr, "Error: Project '%s' not found in %s.\n", projectName, rootDir)
 				os.Exit(1)
 			}
 		} else {
-			projectsToScan, err = discovery.FindProjects("/home/ubuntu/bucket")
-			if err != nil {
-				errorColor.Fprintf(os.Stderr, "Error finding projects: %v\n", err)
-				os.Exit(1)
-			}
-			if len(projectsToScan) == 0 {
-				fmt.Println("No Podman Compose projects found in /home/ubuntu/bucket.")
+			if len(allProjects) == 0 {
+				fmt.Printf("No Podman Compose projects found in %s.\n", rootDir)
 				return
 			}
+			projectsToScan = allProjects // Scan all found projects
 		}
 
-		statusColor.Println("Checking project status...")
+		statusColor.Printf("Checking project status in %s...\n", rootDir)
 		for _, p := range projectsToScan {
 			statusInfo := runner.GetProjectStatus(p.Path)
 
@@ -225,14 +262,25 @@ Otherwise, shows status for all discovered projects.`,
 	},
 }
 
-
 // runSequence executes a series of command steps, streaming output.
-func runSequence(projectName string, sequence []runner.CommandStep) error {
+// It now accepts rootDir to correctly construct project paths.
+func runSequence(projectName, rootDir string, sequence []runner.CommandStep) error {
 	for _, step := range sequence {
 		stepColor.Printf("\n--- Running Step: %s ---\n", step.Name)
 
+		// Adjust step directory only if it's project-specific (Dir is set in sequence definition)
+		// and not a global command (like system prune).
 		if step.Dir != "" {
-			step.Dir = filepath.Join("/home/ubuntu/bucket", projectName)
+			// The step.Dir from sequence definition is the *full project path* already.
+			// We don't need to join with rootDir here. The sequence functions
+			// (UpSequence, DownSequence etc.) should provide the correct full path.
+			// Let's double-check runner.go... yes, they use projectPath directly.
+			// However, the *old* logic here was joining rootDir + projectName.
+			// The new logic in upCmd etc. correctly calculates projectPath = rootDir + projectName.
+			// The sequence functions *receive* this correct full projectPath.
+			// So, the step.Dir *is* the correct full path. No join needed here.
+			// The check `if step.Dir != ""` is sufficient to distinguish project-specific
+			// commands from global ones (like prune).
 		}
 
 		outChan, errChan := runner.StreamCommand(step)

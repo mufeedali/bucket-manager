@@ -13,20 +13,19 @@ import (
 
 // Define styles
 var (
-	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("62")) // Purple
-	errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // Red
-	statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("12")) // Blue
-	stepStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // Yellow
-	successStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // Green
-	cursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("5")) // Magenta
+	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("62")) // Purple
+	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))             // Red
+	statusStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))            // Blue
+	stepStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))            // Yellow
+	successStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))            // Green
+	cursorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))             // Magenta
 	// Status specific styles
-	statusUpStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // Green
-	statusDownStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // Red
-	statusPartialStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // Yellow
+	statusUpStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))  // Green
+	statusDownStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))   // Red
+	statusPartialStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))  // Yellow
 	statusErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("208")) // Orange/Brown for status error
-	statusLoadingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8")) // Grey
+	statusLoadingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))   // Grey
 )
-
 
 type state int
 
@@ -86,10 +85,14 @@ type projectStatusLoadedMsg struct {
 
 func findProjectsCmd() tea.Cmd {
 	return func() tea.Msg {
-		// Use /home/ubuntu/bucket consistently
-		projs, err := discovery.FindProjects("/home/ubuntu/bucket")
+		rootDir, err := discovery.GetComposeRootDirectory()
 		if err != nil {
-			return stepFinishedMsg{fmt.Errorf("failed to load projects: %w", err)}
+			// Return error message if root dir not found
+			return stepFinishedMsg{fmt.Errorf("failed to find compose directory: %w", err)}
+		}
+		projs, err := discovery.FindProjects(rootDir)
+		if err != nil {
+			return stepFinishedMsg{fmt.Errorf("failed to load projects from %s: %w", rootDir, err)}
 		}
 		return projectsLoadedMsg{projs}
 	}
@@ -217,9 +220,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.projects = msg.projects
 		m.currentState = stateProjectList
 		if len(m.projects) == 0 {
-			m.lastError = fmt.Errorf("no projects found in /home/ubuntu/bucket")
+			rootDir, err := discovery.GetComposeRootDirectory()
+			if err != nil { // Handle error getting root dir for message
+				rootDir = "compose directory" // Fallback message
+			}
+			m.lastError = fmt.Errorf("no projects found in %s", rootDir)
 			m.currentState = stateSequenceError
 		} else {
+			// Trigger initial status fetch for all projects
 			for _, p := range m.projects {
 				if !m.loadingStatus[p.Path] {
 					m.loadingStatus[p.Path] = true

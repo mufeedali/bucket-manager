@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,33 @@ import (
 type Project struct {
 	Name string // Name of the directory
 	Path string // Full path to the directory
+}
+
+// GetComposeRootDirectory finds the root directory for compose projects by checking
+// standard locations within the user's home directory.
+func GetComposeRootDirectory() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("could not get user home directory: %w", err)
+	}
+
+	possibleDirs := []string{
+		filepath.Join(homeDir, "bucket"),
+		filepath.Join(homeDir, "compose-bucket"),
+	}
+
+	for _, dir := range possibleDirs {
+		info, err := os.Stat(dir)
+		if err == nil && info.IsDir() {
+			return dir, nil // Found a valid directory
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			// Log or handle unexpected errors during stat, but continue checking other paths
+			fmt.Fprintf(os.Stderr, "Warning: error checking directory %s: %v\n", dir, err)
+		}
+	}
+
+	return "", fmt.Errorf("could not find 'bucket' or 'compose-bucket' directory in home directory (%s)", homeDir)
 }
 
 // FindProjects scans the given root directory for subdirectories containing

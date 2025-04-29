@@ -242,7 +242,6 @@ func GetProjectStatus(projectPath string) ProjectRuntimeInfo {
 		return info
 	}
 
-
 	info.Containers = containers
 
 	if len(containers) == 0 {
