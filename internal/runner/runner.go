@@ -58,11 +58,8 @@ func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 			return
 		}
 
-		// Use a WaitGroup to wait for both streams to finish
-		// var wg sync.WaitGroup // Not needed as we read until EOF
 		outputDone := make(chan struct{}, 2) // Signal channel for stream completion
 
-		// Goroutine to read stdout
 		go func() {
 			defer func() { outputDone <- struct{}{} }() // Signal completion
 			scanner := bufio.NewScanner(stdoutPipe)
@@ -75,7 +72,6 @@ func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 			}
 		}()
 
-		// Goroutine to read stderr
 		go func() {
 			defer func() { outputDone <- struct{}{} }() // Signal completion
 			scanner := bufio.NewScanner(stderrPipe)
@@ -88,16 +84,13 @@ func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 			}
 		}()
 
-		// Wait for the command to finish
 		cmdErr := cmd.Wait()
 
-		// Wait for both stream readers to finish before closing channels/returning
+		// Wait for readers to finish
 		<-outputDone
 		<-outputDone
 
-		// Send the final command error (if any)
 		if cmdErr != nil {
-			// Try to get more specific exit code if possible
 			if exitError, ok := cmdErr.(*exec.ExitError); ok {
 				if status, ok := exitError.Sys().(syscall.WaitStatus); ok {
 					errChan <- fmt.Errorf("command exited with status %d: %w", status.ExitStatus(), cmdErr)
@@ -108,8 +101,7 @@ func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 			return
 		}
 
-		// If no error, signal success by closing errChan without sending anything
-		// The receiver will get a zero value (nil) when reading from a closed channel.
+		// Success is signaled by closing errChan without sending an error
 	}()
 
 	return outChan, errChan
@@ -117,7 +109,6 @@ func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 
 // --- Command Sequences ---
 
-// UpSequence defines the steps for the 'up' action.
 func UpSequence(projectPath string) []CommandStep {
 	return []CommandStep{
 		{
@@ -135,7 +126,6 @@ func UpSequence(projectPath string) []CommandStep {
 	}
 }
 
-// DownSequence defines the steps for the 'down' action.
 func DownSequence(projectPath string) []CommandStep {
 	return []CommandStep{
 		{
@@ -147,7 +137,6 @@ func DownSequence(projectPath string) []CommandStep {
 	}
 }
 
-// RefreshSequence defines the steps for the 'refresh' action.
 func RefreshSequence(projectPath string) []CommandStep {
 	return []CommandStep{
 		{
@@ -172,15 +161,13 @@ func RefreshSequence(projectPath string) []CommandStep {
 		{
 			Name:    "Prune System",
 			Command: "podman",
-			Args:    []string{"system", "prune", "-af"},
-			// No Dir needed, system-wide command
+			Args:    []string{"system", "prune", "-af"}, // System-wide command
 		},
 	}
 }
 
 // --- Status Logic ---
 
-// ProjectStatus represents the overall status of a compose project.
 type ProjectStatus string
 
 const (
@@ -188,10 +175,9 @@ const (
 	StatusDown    ProjectStatus = "DOWN"
 	StatusPartial ProjectStatus = "PARTIAL"
 	StatusError   ProjectStatus = "ERROR"
-	StatusUnknown ProjectStatus = "UNKNOWN" // Should not happen ideally
+	StatusUnknown ProjectStatus = "UNKNOWN"
 )
 
-// ContainerState represents the state of a single container from 'podman compose ps'.
 type ContainerState struct {
 	Name    string `json:"Name"`
 	Command string `json:"Command"`
@@ -204,12 +190,11 @@ type ContainerState struct {
 type ProjectRuntimeInfo struct {
 	OverallStatus ProjectStatus
 	Containers    []ContainerState
-	Error         error // Any error encountered during status check
+	Error         error
 }
 
-// GetProjectStatus determines the runtime status of a Podman Compose project.
 func GetProjectStatus(projectPath string) ProjectRuntimeInfo {
-	info := ProjectRuntimeInfo{OverallStatus: StatusUnknown} // Default
+	info := ProjectRuntimeInfo{OverallStatus: StatusUnknown}
 
 	cmd := exec.Command("podman", "compose", "-f", "compose.yaml", "ps", "--format", "json", "-a")
 	cmd.Dir = projectPath
@@ -219,40 +204,35 @@ func GetProjectStatus(projectPath string) ProjectRuntimeInfo {
 
 	err := cmd.Run()
 	if err != nil {
-		// Check if the error is just "no containers found" which might mean DOWN
 		stderrStr := stderr.String()
 		if strings.Contains(stderrStr, "no containers found") {
 			info.OverallStatus = StatusDown
-			return info // No containers means it's down
+			return info
 		}
-		// Otherwise, it's a real error
 		info.OverallStatus = StatusError
 		info.Error = fmt.Errorf("failed to run 'podman compose ps': %w\nStderr: %s", err, stderrStr)
 		return info
 	}
 
-	// Handle empty output - might happen if compose file is empty or invalid?
 	if stdout.Len() == 0 {
-		// Let's assume DOWN if ps runs ok but gives no output. Could refine this.
+		// Assume DOWN if ps runs ok but gives no output
 		info.OverallStatus = StatusDown
 		return info
 	}
 
-	// Decode the JSON output
-	// The output is typically a JSON object per line, not a single array
+	// Decode the JSON output (one object per line)
 	var containers []ContainerState
 	scanner := bufio.NewScanner(&stdout)
 	for scanner.Scan() {
 		var container ContainerState
 		line := scanner.Bytes()
-		// Skip empty lines just in case
 		if len(bytes.TrimSpace(line)) == 0 {
-			continue
+			continue // Skip empty lines
 		}
 		if err := json.Unmarshal(line, &container); err != nil {
 			info.OverallStatus = StatusError
 			info.Error = fmt.Errorf("failed to decode container status JSON line '%s': %w", string(line), err)
-			return info // Stop processing on decode error
+			return info
 		}
 		containers = append(containers, container)
 	}
@@ -266,18 +246,14 @@ func GetProjectStatus(projectPath string) ProjectRuntimeInfo {
 	info.Containers = containers
 
 	if len(containers) == 0 {
-		// If ps ran successfully but returned no containers (after filtering empty lines)
 		info.OverallStatus = StatusDown
 		return info
 	}
 
-	// Determine overall status
 	allRunning := true
 	anyRunning := false
 	for _, c := range containers {
-		// Consider "running" or "healthy" states as up
 		isRunning := strings.Contains(strings.ToLower(c.Status), "running") || strings.Contains(strings.ToLower(c.Status), "healthy") || strings.HasPrefix(c.Status, "Up")
-
 		if isRunning {
 			anyRunning = true
 		} else {
