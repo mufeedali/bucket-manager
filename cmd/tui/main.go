@@ -13,7 +13,7 @@ func main() {
 	m := ui.InitialModel()
 
 	// Create and run the Bubble Tea program
-	p := tea.NewProgram(m)
+	p := tea.NewProgram(&m) // Pass the pointer to the model
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Alas, there's been an error: %v\n", err)
 		os.Exit(1)
