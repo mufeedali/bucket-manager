@@ -3,7 +3,7 @@ package ui
 import (
 	"fmt"
 	"podman-compose-manager/internal/discovery"
-	"podman-compose-manager/internal/runner"
+	"podman-compose-manager/internal/runner" // Ensure runner is imported
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -19,6 +19,12 @@ var (
 	stepStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // Yellow
 	successStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // Green
 	cursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("5")) // Magenta
+	// Status specific styles
+	statusUpStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // Green
+	statusDownStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // Red
+	statusPartialStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // Yellow
+	statusErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("208")) // Orange/Brown for status error
+	statusLoadingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8")) // Grey
 )
 
 
@@ -29,6 +35,7 @@ const (
 	stateProjectList                  // Displaying the list of projects
 	stateRunningSequence              // An action sequence (up/down/refresh) is running
 	stateSequenceError                // An error occurred during a sequence
+	stateProjectDetails               // Displaying details for a single project
 )
 
 type model struct {
@@ -46,6 +53,12 @@ type model struct {
 	// Channels for the currently running step
 	outputChan <-chan runner.OutputLine
 	errorChan  <-chan error
+	// Status tracking
+	projectStatuses map[string]runner.ProjectRuntimeInfo // Map project path to its status
+	loadingStatus   map[string]bool                      // Map project path to loading state
+	// Details view
+	detailedProject *discovery.Project // Project being viewed in detail
+	sequenceProject *discovery.Project // Project the current sequence is running for
 }
 
 // --- Messages ---
@@ -64,6 +77,11 @@ type stepFinishedMsg struct { // New message indicating a step completed (succes
 
 type sequenceFinishedMsg struct{} // New message indicating all steps in sequence are done
 
+type projectStatusLoadedMsg struct { // New message for when a project's status is loaded
+	projectPath string
+	statusInfo  runner.ProjectRuntimeInfo
+}
+
 
 // --- Commands ---
 
@@ -80,6 +98,13 @@ func findProjectsCmd() tea.Cmd {
 	}
 }
 
+// fetchProjectStatusCmd fetches the status for a single project asynchronously.
+func fetchProjectStatusCmd(projectPath string) tea.Cmd {
+	return func() tea.Msg {
+		statusInfo := runner.GetProjectStatus(projectPath)
+		return projectStatusLoadedMsg{projectPath: projectPath, statusInfo: statusInfo}
+	}
+}
 // New message to pass channels back to Update loop
 type channelsAvailableMsg struct {
 	outChan <-chan runner.OutputLine
@@ -121,8 +146,12 @@ func waitForErrorCmd(errChan <-chan error) tea.Cmd {
 func InitialModel() model {
 	// Initialize viewport later once dimensions are known
 	return model{
-		currentState: stateLoadingProjects,
-		cursor:       0,
+		currentState:    stateLoadingProjects,
+		cursor:          0,
+		projectStatuses: make(map[string]runner.ProjectRuntimeInfo),
+		loadingStatus:   make(map[string]bool),
+		detailedProject: nil,
+		sequenceProject: nil,
 	}
 }
 
@@ -176,13 +205,43 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) { // Changed to pointer
 				m.currentSequence = nil
 				m.currentStepIndex = 0
 				m.viewport.GotoTop() // Reset viewport scroll
+				// Store the project path before clearing sequence info
+				projectPathToRefresh := ""
+				if m.sequenceProject != nil {
+					projectPathToRefresh = m.sequenceProject.Path
+				}
+				// Clear sequence state
+				m.currentState = stateProjectList
+				m.outputContent = "" // Clear output
+				m.lastError = nil
+				m.currentSequence = nil
+				m.currentStepIndex = 0
+				m.sequenceProject = nil // Clear the sequence project
+				m.viewport.GotoTop() // Reset viewport scroll
 				// TODO: Cancel running command if returning while running
+
+				// Trigger status refresh for the project that was acted upon
+				if projectPathToRefresh != "" && !m.loadingStatus[projectPathToRefresh] {
+					m.loadingStatus[projectPathToRefresh] = true
+					cmds = append(cmds, fetchProjectStatusCmd(projectPathToRefresh))
+				}
 			} else {
 				// Pass other keys (like arrows, pgup/pgdn) to viewport
 				var vpCmd tea.Cmd
 				m.viewport, vpCmd = m.viewport.Update(msg)
 				cmds = append(cmds, vpCmd)
 			}
+		case stateProjectDetails:
+			// Handle keys for the details view
+			if msg.String() == "q" || msg.Type == tea.KeyCtrlC {
+				return m, tea.Quit
+			}
+			if msg.Type == tea.KeyEsc || msg.String() == "b" {
+				// Return to project list
+				m.currentState = stateProjectList
+				m.detailedProject = nil // Clear detailed project
+			}
+			// Potentially add scrolling later if details become long
 		default: // Loading projects state
 			if msg.String() == "q" || msg.Type == tea.KeyCtrlC {
 				return m, tea.Quit
@@ -199,7 +258,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) { // Changed to pointer
 		if len(m.projects) == 0 {
 			m.lastError = fmt.Errorf("no projects found in /home/ubuntu/bucket")
 			m.currentState = stateSequenceError // Treat as error state
+		} else {
+			// Trigger status fetch for all loaded projects initially
+			for _, p := range m.projects {
+				if !m.loadingStatus[p.Path] { // Check if not already loading (shouldn't be, but safe)
+					m.loadingStatus[p.Path] = true
+					cmds = append(cmds, fetchProjectStatusCmd(p.Path))
+				}
+			}
 		}
+
+	// A project's status has been loaded
+	case projectStatusLoadedMsg:
+		m.loadingStatus[msg.projectPath] = false // Mark as not loading anymore
+		m.projectStatuses[msg.projectPath] = msg.statusInfo
+		// No command needed, just update state
 
 	// Step finished (could be project loading error or sequence step error/success)
 	case stepFinishedMsg:
@@ -231,6 +304,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) { // Changed to pointer
 					m.viewport.SetContent(m.outputContent)
 					m.viewport.GotoBottom()
 					// Stay in stateRunningSequence, user presses 'b'/'esc'/etc to go back
+
+					// Trigger status refresh for the completed project
+					if m.sequenceProject != nil && !m.loadingStatus[m.sequenceProject.Path] {
+						m.loadingStatus[m.sequenceProject.Path] = true
+						cmds = append(cmds, fetchProjectStatusCmd(m.sequenceProject.Path))
+					}
+					// Don't clear sequenceProject here, needed if user presses 'b'
 				} else {
 					// Start the next step in the sequence
 					cmds = append(cmds, m.startNextStepCmd())
@@ -298,11 +378,23 @@ func (m *model) handleProjectListKeys(msg tea.KeyMsg) []tea.Cmd {
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
+			// Fetch status for newly selected project if needed
+			selectedProject := m.projects[m.cursor]
+			if _, loaded := m.projectStatuses[selectedProject.Path]; !loaded && !m.loadingStatus[selectedProject.Path] {
+				m.loadingStatus[selectedProject.Path] = true
+				cmds = append(cmds, fetchProjectStatusCmd(selectedProject.Path))
+			}
 		}
 
 	case "down", "j":
 		if m.cursor < len(m.projects)-1 {
 			m.cursor++
+			// Fetch status for newly selected project if needed
+			selectedProject := m.projects[m.cursor]
+			if _, loaded := m.projectStatuses[selectedProject.Path]; !loaded && !m.loadingStatus[selectedProject.Path] {
+				m.loadingStatus[selectedProject.Path] = true
+				cmds = append(cmds, fetchProjectStatusCmd(selectedProject.Path))
+			}
 		}
 
 	case "u", "d", "r": // Handle actions
@@ -326,6 +418,16 @@ func (m *model) handleProjectListKeys(msg tea.KeyMsg) []tea.Cmd {
 			// Start the first step of the sequence
 			cmds = append(cmds, m.startNextStepCmd())
 		}
+	case "enter": // Show project details
+		if len(m.projects) > 0 {
+			m.detailedProject = &m.projects[m.cursor] // Store pointer to the selected project
+			m.currentState = stateProjectDetails
+			// Ensure status is fetched if not already available/loading
+			if _, loaded := m.projectStatuses[m.detailedProject.Path]; !loaded && !m.loadingStatus[m.detailedProject.Path] {
+				m.loadingStatus[m.detailedProject.Path] = true
+				cmds = append(cmds, fetchProjectStatusCmd(m.detailedProject.Path))
+			}
+		}
 	}
 	return cmds // Return slice of commands
 }
@@ -337,12 +439,14 @@ func (m *model) startNextStepCmd() tea.Cmd {
 	}
 	step := m.currentSequence[m.currentStepIndex]
 
+	// Store the project this sequence is for, only when starting the first step
+	if m.currentStepIndex == 0 && m.cursor >= 0 && m.cursor < len(m.projects) {
+		m.sequenceProject = &m.projects[m.cursor]
+	}
+
 	// Adjust step directory if needed (consistency with CLI)
-	// Use the project path associated with the *currently selected* project (cursor)
-	// This assumes the cursor hasn't changed since the action was initiated.
-	// A safer approach might be to store the selected project index when starting the sequence.
-	if step.Dir != "" && m.cursor >= 0 && m.cursor < len(m.projects) {
-		step.Dir = m.projects[m.cursor].Path // Use the actual project path
+	if step.Dir != "" && m.sequenceProject != nil {
+		step.Dir = m.sequenceProject.Path // Use the actual project path from stored sequenceProject
 	}
 
 
@@ -379,12 +483,91 @@ func (m *model) View() string { // Changed to pointer receiver
 			if m.cursor == i {
 				cursor = cursorStyle.Render("> ")
 			}
-			bodyContent.WriteString(fmt.Sprintf("%s%s\n", cursor, project.Name))
+			// Determine status string
+			statusStr := ""
+			if m.loadingStatus[project.Path] {
+				statusStr = statusLoadingStyle.Render(" [loading...]")
+			} else if statusInfo, ok := m.projectStatuses[project.Path]; ok {
+				switch statusInfo.OverallStatus {
+				case runner.StatusUp:
+					statusStr = statusUpStyle.Render(" [UP]")
+				case runner.StatusDown:
+					statusStr = statusDownStyle.Render(" [DOWN]")
+				case runner.StatusPartial:
+					statusStr = statusPartialStyle.Render(" [PARTIAL]")
+				case runner.StatusError:
+					// Maybe add tooltip or detail later for the error
+					statusStr = statusErrorStyle.Render(" [ERROR]")
+				default: // Unknown or empty status
+					statusStr = statusLoadingStyle.Render(" [?]") // Use loading style for unknown
+				}
+			} else {
+				// Not loading and no status yet (should be fetched on load/scroll)
+				statusStr = statusLoadingStyle.Render(" [?]")
+			}
+
+			bodyContent.WriteString(fmt.Sprintf("%s%s%s\n", cursor, project.Name, statusStr))
 		}
 
 	case stateRunningSequence, stateSequenceError:
 		// The viewport handles the main body content in these states
 		body = m.viewport.View() // Use viewport directly for body
+
+	case stateProjectDetails:
+		if m.detailedProject == nil {
+			bodyContent.WriteString(errorStyle.Render("Error: No project selected for details."))
+		} else {
+			bodyContent.WriteString(titleStyle.Render(fmt.Sprintf("Details for: %s", m.detailedProject.Name)) + "\n\n")
+			statusStr := ""
+			statusInfo, loaded := m.projectStatuses[m.detailedProject.Path]
+			isLoading := m.loadingStatus[m.detailedProject.Path]
+
+			if isLoading {
+				statusStr = statusLoadingStyle.Render(" [loading...]")
+				bodyContent.WriteString(fmt.Sprintf("Overall Status:%s\n", statusStr))
+			} else if !loaded {
+				statusStr = statusLoadingStyle.Render(" [?]")
+				bodyContent.WriteString(fmt.Sprintf("Overall Status:%s\n", statusStr))
+			} else {
+				// Status is loaded
+				switch statusInfo.OverallStatus {
+				case runner.StatusUp:
+					statusStr = statusUpStyle.Render(" [UP]")
+				case runner.StatusDown:
+					statusStr = statusDownStyle.Render(" [DOWN]")
+				case runner.StatusPartial:
+					statusStr = statusPartialStyle.Render(" [PARTIAL]")
+				case runner.StatusError:
+					statusStr = statusErrorStyle.Render(" [ERROR]")
+				default:
+					statusStr = statusLoadingStyle.Render(" [?]")
+				}
+				bodyContent.WriteString(fmt.Sprintf("Overall Status:%s\n", statusStr))
+
+				if statusInfo.Error != nil {
+					bodyContent.WriteString(errorStyle.Render(fmt.Sprintf("  Error fetching status: %v\n", statusInfo.Error)))
+				}
+
+				if len(statusInfo.Containers) > 0 {
+					bodyContent.WriteString("\nContainers:\n")
+					// Simple header for now
+					bodyContent.WriteString(fmt.Sprintf("  %-20s %-30s %s\n", "SERVICE", "CONTAINER NAME", "STATUS"))
+					bodyContent.WriteString(fmt.Sprintf("  %-20s %-30s %s\n", "-------", "--------------", "------"))
+					for _, c := range statusInfo.Containers {
+						// Determine container status color
+						isUp := strings.Contains(strings.ToLower(c.Status), "running") || strings.Contains(strings.ToLower(c.Status), "healthy") || strings.HasPrefix(c.Status, "Up")
+						statusRenderFunc := statusDownStyle.Render // Default to down/red
+						if isUp {
+							statusRenderFunc = statusUpStyle.Render
+						}
+						bodyContent.WriteString(fmt.Sprintf("  %-20s %-30s %s\n", c.Service, c.Name, statusRenderFunc(c.Status)))
+					}
+				} else if statusInfo.OverallStatus != runner.StatusError {
+					// Only show "no containers" if status isn't already error
+					bodyContent.WriteString("\n  (No containers found or running)\n")
+				}
+			}
+		}
 
 	}
 	// If body wasn't set directly by viewport, use the builder content
@@ -397,27 +580,38 @@ func (m *model) View() string { // Changed to pointer receiver
 	footerContent.WriteString("\n") // Separator line
 	switch m.currentState {
 	case stateProjectList:
-		footerContent.WriteString("[↑/k ↓/j] Navigate | [u] Up | [d] Down | [r] Refresh | [q] Quit")
+		footerContent.WriteString("[↑/k ↓/j] Navigate | [Enter] Details | [u] Up | [d] Down | [r] Refresh | [q] Quit") // Added Enter
 	case stateRunningSequence:
 		// Show status of the running sequence
+		projectName := ""
+		if m.sequenceProject != nil {
+			projectName = fmt.Sprintf(" for %s", m.sequenceProject.Name)
+		}
 		if m.currentSequence != nil && m.currentStepIndex < len(m.currentSequence) {
-			footerContent.WriteString(statusStyle.Render(fmt.Sprintf("Running step %d/%d: %s...",
+			footerContent.WriteString(statusStyle.Render(fmt.Sprintf("Running step %d/%d%s: %s...",
 				m.currentStepIndex+1,
 				len(m.currentSequence),
+				projectName,
 				m.currentSequence[m.currentStepIndex].Name)))
 		} else {
 			// Sequence finished successfully
-			footerContent.WriteString(successStyle.Render("Sequence finished successfully."))
+			footerContent.WriteString(successStyle.Render(fmt.Sprintf("Sequence finished successfully%s.", projectName)))
 		}
 		footerContent.WriteString("\n[↑/↓ PgUp/PgDn] Scroll | [b/Esc/Enter] Back | [q] Quit")
 	case stateSequenceError:
 		// Show error message
+		projectName := ""
+		if m.sequenceProject != nil {
+			projectName = fmt.Sprintf(" for %s", m.sequenceProject.Name)
+		}
 		if m.lastError != nil {
-			footerContent.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.lastError)))
+			footerContent.WriteString(errorStyle.Render(fmt.Sprintf("Error%s: %v", projectName, m.lastError)))
 		} else {
-			footerContent.WriteString(errorStyle.Render("An unknown error occurred."))
+			footerContent.WriteString(errorStyle.Render(fmt.Sprintf("An unknown error occurred%s.", projectName)))
 		}
 		footerContent.WriteString("\n[↑/↓ PgUp/PgDn] Scroll | [b/Esc/Enter] Back | [q] Quit")
+	case stateProjectDetails:
+		footerContent.WriteString("[b/Esc] Back to List | [q] Quit")
 	default: // Loading
 		footerContent.WriteString("[q] Quit")
 	}
