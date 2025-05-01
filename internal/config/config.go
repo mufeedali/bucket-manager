@@ -92,7 +92,6 @@ func SaveConfig(cfg Config) error {
 		return err
 	}
 
-	// Ensure the directory exists before trying to write
 	err = EnsureConfigDir()
 	if err != nil {
 		return err

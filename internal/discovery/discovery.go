@@ -59,7 +59,7 @@ func GetComposeRootDirectory() (string, error) {
 	for _, dir := range possibleDirs {
 		info, err := os.Stat(dir)
 		if err == nil && info.IsDir() {
-			return dir, nil // Found a valid directory
+			return dir, nil
 		}
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			// Log or handle unexpected errors during stat, but continue checking other paths
@@ -72,13 +72,13 @@ func GetComposeRootDirectory() (string, error) {
 
 // FindProjects discovers projects asynchronously, returning channels for results, errors, and completion.
 func FindProjects() (<-chan Project, <-chan error, <-chan struct{}) {
-	projectChan := make(chan Project, 10) // Buffered channel for projects
-	errorChan := make(chan error, 5)      // Buffered channel for errors
-	doneChan := make(chan struct{})       // Channel to signal completion
+	projectChan := make(chan Project, 10)
+	errorChan := make(chan error, 5)
+	doneChan := make(chan struct{})
 	var wg sync.WaitGroup
 
 	// 1. Load Configuration first
-	cfg, configErr := config.LoadConfig() // Use different var name for error
+	cfg, configErr := config.LoadConfig()
 	if configErr != nil {
 		// Send config error immediately, but don't block other discovery
 		go func() { // Send in a goroutine to avoid blocking return if channel buffer is full
@@ -87,11 +87,10 @@ func FindProjects() (<-chan Project, <-chan error, <-chan struct{}) {
 	}
 
 	// 2. Determine number of goroutines and Add to WaitGroup *before* launching any
-	numGoroutines := 1 // Start with 1 for local discovery
+	numGoroutines := 1
 	if configErr == nil {
-		numGoroutines += len(cfg.SSHHosts) // Add count for remote hosts if config loaded
+		numGoroutines += len(cfg.SSHHosts)
 	}
-	fmt.Fprintf(os.Stderr, "[Debug] Expecting %d discovery goroutines.\n", numGoroutines) // Log
 	wg.Add(numGoroutines)
 
 	// 3. Launch the goroutine to wait and close channels *after* Add
@@ -99,10 +98,11 @@ func FindProjects() (<-chan Project, <-chan error, <-chan struct{}) {
 		wg.Wait()
 		close(projectChan)
 		close(errorChan)
+		close(doneChan)
 	}()
 
 	go func() {
-		defer wg.Done() // Decrement counter when done
+		defer wg.Done()
 		localRootDir, err := GetComposeRootDirectory()
 		if err == nil {
 			localProjects, err := findLocalProjects(localRootDir)
@@ -122,8 +122,8 @@ func FindProjects() (<-chan Project, <-chan error, <-chan struct{}) {
 	if configErr == nil {
 		for i := range cfg.SSHHosts {
 			hostConfig := cfg.SSHHosts[i] // Create copy for the goroutine closure
-			go func(hc config.SSHHost) {  // Pass the copy
-				defer wg.Done() // Decrement counter when done
+			go func(hc config.SSHHost) {
+				defer wg.Done()
 				remoteProjects, err := findRemoteProjects(&hc)
 				if err != nil {
 					errorChan <- fmt.Errorf("remote discovery failed for %s: %w", hc.Name, err)
@@ -132,7 +132,7 @@ func FindProjects() (<-chan Project, <-chan error, <-chan struct{}) {
 						projectChan <- p
 					}
 				}
-			}(hostConfig) // Pass the copy to the goroutine
+			}(hostConfig)
 		}
 	}
 
@@ -157,7 +157,6 @@ func findLocalProjects(rootDir string) ([]Project, error) {
 		projectName := entry.Name()
 		projectPath := filepath.Join(rootDir, projectName)
 
-		// Check for compose.yaml or compose.yml
 		composePathYaml := filepath.Join(projectPath, "compose.yaml")
 		composePathYml := filepath.Join(projectPath, "compose.yml")
 		_, errYaml := os.Stat(composePathYaml)
@@ -190,7 +189,7 @@ func findRemoteProjects(hostConfig *config.SSHHost) ([]Project, error) {
 
 	client, err := sshManager.GetClient(*hostConfig)
 	if err != nil {
-		// Don't wrap error here, GetClient already provides context
+		// GetClient already provides context
 		return nil, err
 	}
 
@@ -198,18 +197,15 @@ func findRemoteProjects(hostConfig *config.SSHHost) ([]Project, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ssh session for discovery on %s: %w", hostConfig.Name, err)
 	}
-	// Don't close the first session immediately, we need it for pwd
-	// defer session.Close() // Moved deferral
 
 	// --- 1. Resolve RemoteRoot path ---
-	// Use util.QuoteArgForShell
 	resolveCmd := fmt.Sprintf("cd %s && pwd", util.QuoteArgForShell(hostConfig.RemoteRoot))
 	pwdOutput, err := session.CombinedOutput(resolveCmd)
 	if err != nil {
-		session.Close() // Close session before returning error
+		session.Close()
 		return nil, fmt.Errorf("failed to resolve remote root path '%s' on host %s: %w\nOutput: %s", hostConfig.RemoteRoot, hostConfig.Name, err, string(pwdOutput))
 	}
-	session.Close() // Close the session used for pwd
+	session.Close()
 
 	absoluteRemoteRoot := strings.TrimSpace(string(pwdOutput))
 	if absoluteRemoteRoot == "" {
@@ -217,20 +213,18 @@ func findRemoteProjects(hostConfig *config.SSHHost) ([]Project, error) {
 	}
 
 	// --- 2. Find projects relative to the resolved root ---
-	// Re-establish session for the find command
 	session, err = client.NewSession()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create second ssh session for discovery on %s: %w", hostConfig.Name, err)
 	}
-	defer session.Close() // Defer close for the find session
+	defer session.Close()
 
 	// Command to find directories containing compose.y*ml one level deep using fd
 	remoteFindCmd := fmt.Sprintf(
 		`fd -g -d 2 'compose.y*ml' %s -x dirname {} | sort -u`,
-		util.QuoteArgForShell(absoluteRemoteRoot), // Use resolved absolute path
+		util.QuoteArgForShell(absoluteRemoteRoot),
 	)
 
-	// Run the find command and capture output
 	output, err := session.CombinedOutput(remoteFindCmd)
 	if err != nil {
 		// Include output in error message as it might contain stderr
@@ -245,7 +239,6 @@ func findRemoteProjects(hostConfig *config.SSHHost) ([]Project, error) {
 			continue
 		}
 
-		// Calculate the relative path using the resolved absolute root path
 		relativePath, err := filepath.Rel(absoluteRemoteRoot, fullPath)
 		if err != nil {
 			// This error is now more likely to indicate a logic issue or unexpected output from find
@@ -255,9 +248,8 @@ func findRemoteProjects(hostConfig *config.SSHHost) ([]Project, error) {
 		// Ensure relative path uses forward slashes for consistency
 		relativePath = filepath.ToSlash(relativePath)
 
-		// Project name is the base of the relative path
 		projectName := filepath.Base(relativePath)
-		if projectName == "." || projectName == "/" { // Skip if it's the root itself
+		if projectName == "." || projectName == "/" {
 			continue
 		}
 
@@ -266,7 +258,7 @@ func findRemoteProjects(hostConfig *config.SSHHost) ([]Project, error) {
 			Path:       relativePath, // Store the calculated relative path
 			ServerName: hostConfig.Name,
 			IsRemote:   true,
-			HostConfig: hostConfig, // Store pointer to the config
+			HostConfig: hostConfig,
 		})
 	}
 	if err := scanner.Err(); err != nil {

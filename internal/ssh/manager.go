@@ -41,12 +41,11 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 		_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
 		if err == nil {
 			m.mu.Unlock()
-			return client, nil // Return existing, seemingly valid client
+			return client, nil
 		}
 		// Connection seems dead, close it and remove from map
 		client.Close()
 		delete(m.clients, hostConfig.Name)
-		// Proceed to create a new connection below
 	}
 	m.mu.Unlock() // Unlock before potentially long Dial operation
 
@@ -63,12 +62,12 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 		User:            hostConfig.User,
 		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: Implement proper host key verification!
-		Timeout:         10 * time.Second,            // Connection timeout
+		Timeout:         10 * time.Second,
 	}
 
 	port := hostConfig.Port
 	if port == 0 {
-		port = 22 // Default SSH port
+		port = 22
 	}
 	addr := fmt.Sprintf("%s:%d", hostConfig.Hostname, port)
 
@@ -77,7 +76,6 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 		return nil, fmt.Errorf("failed to dial ssh host %s (%s): %w", hostConfig.Name, addr, err)
 	}
 
-	// Store the new client
 	m.mu.Lock()
 	// Double-check if another goroutine created a client while we were dialing
 	existingClient, found := m.clients[hostConfig.Name]
@@ -99,7 +97,6 @@ func (m *Manager) getAuthMethods(hostConfig config.SSHHost) ([]ssh.AuthMethod, e
 	// 1. Priority: Specific Key File
 	if hostConfig.KeyPath != "" {
 		keyPath := hostConfig.KeyPath
-		// Expand ~ if necessary
 		if strings.HasPrefix(keyPath, "~/") {
 			homeDir, err := os.UserHomeDir()
 			if err == nil { // Ignore error if home dir can't be found
@@ -144,7 +141,7 @@ func (m *Manager) CloseAll() {
 	defer m.mu.Unlock()
 	for name, client := range m.clients {
 		client.Close()
-		delete(m.clients, name) // Remove from map after closing
+		delete(m.clients, name)
 	}
 }
 

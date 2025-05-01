@@ -101,7 +101,6 @@ func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 			}
 			remoteCmdString := strings.Join(remoteCmdParts, " ")
 
-			// Start the remote command
 			if err := session.Start(remoteCmdString); err != nil {
 				errChan <- fmt.Errorf("failed to start remote command for %s: %w", cmdDesc, err)
 				return
@@ -193,7 +192,6 @@ func streamPipe(pipe io.Reader, outChan chan<- OutputLine, doneChan chan<- struc
 }
 
 // --- Command Sequences ---
-// These now take the Project struct to associate steps with the target.
 
 func UpSequence(project discovery.Project) []CommandStep {
 	return []CommandStep{
@@ -286,7 +284,6 @@ type ProjectRuntimeInfo struct {
 
 // GetProjectStatus retrieves the status of a project, using internal SSH client if remote.
 func GetProjectStatus(project discovery.Project) ProjectRuntimeInfo {
-	// Initialize info with the project itself
 	info := ProjectRuntimeInfo{Project: project, OverallStatus: StatusUnknown}
 	cmdDesc := fmt.Sprintf("status check for project %s", project.Identifier())
 	psArgs := []string{"compose", "-f", "compose.yaml", "ps", "--format", "json", "-a"}
@@ -323,14 +320,12 @@ func GetProjectStatus(project discovery.Project) ProjectRuntimeInfo {
 		}
 		defer session.Close()
 
-		// Construct remote command
 		remoteCmdParts := []string{"cd", util.QuoteArgForShell(filepath.Join(project.HostConfig.RemoteRoot, project.Path)), "&&", "podman"}
 		for _, arg := range psArgs {
 			remoteCmdParts = append(remoteCmdParts, util.QuoteArgForShell(arg))
 		}
 		remoteCmdString := strings.Join(remoteCmdParts, " ")
 
-		// Run the command and capture combined output
 		output, err = session.CombinedOutput(remoteCmdString)
 		stderrStr = string(output)
 
@@ -369,7 +364,6 @@ func GetProjectStatus(project discovery.Project) ProjectRuntimeInfo {
 		return info
 	}
 
-	// Decode the JSON output
 	var containers []ContainerState
 	scanner := bufio.NewScanner(bytes.NewReader(output))
 	for scanner.Scan() {

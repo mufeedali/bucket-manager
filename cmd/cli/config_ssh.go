@@ -89,7 +89,6 @@ var sshAddCmd = &cobra.Command{
 			errorColor.Fprintf(os.Stderr, "Error reading name: %v\n", inputErr)
 			os.Exit(1)
 		}
-		// Check if name already exists
 		for _, h := range cfg.SSHHosts {
 			if h.Name == newHost.Name {
 				errorColor.Fprintf(os.Stderr, "Error: SSH host with name '%s' already exists.\n", newHost.Name)
@@ -122,7 +121,6 @@ var sshAddCmd = &cobra.Command{
 		}
 
 		// --- Authentication Details ---
-		// Use the shared helper function
 		inputErr = promptForAuthDetails(&newHost, false, "") // false for isEditing, empty original password
 		if inputErr != nil {
 			errorColor.Fprintf(os.Stderr, "Error getting authentication details: %v\n", inputErr)
@@ -258,7 +256,7 @@ var sshEditCmd = &cobra.Command{
 		editedHost.Disabled = disableChoice
 
 		// --- Save Configuration ---
-		cfg.SSHHosts[hostIndex] = editedHost // Update the host in the slice
+		cfg.SSHHosts[hostIndex] = editedHost
 		err = config.SaveConfig(cfg)
 		if err != nil {
 			errorColor.Fprintf(os.Stderr, "Error saving configuration: %v\n", err)
@@ -301,7 +299,7 @@ var sshRemoveCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		hostToRemove := cfg.SSHHosts[choice-1] // Get the host to remove
+		hostToRemove := cfg.SSHHosts[choice-1]
 
 		confirmed, err := promptConfirm(fmt.Sprintf("Are you sure you want to remove host '%s'?", hostToRemove.Name))
 		if err != nil {
@@ -314,10 +312,8 @@ var sshRemoveCmd = &cobra.Command{
 			return
 		}
 
-		// Remove the host from the slice
 		cfg.SSHHosts = append(cfg.SSHHosts[:choice-1], cfg.SSHHosts[choice:]...)
 
-		// Save the updated configuration
 		err = config.SaveConfig(cfg)
 		if err != nil {
 			errorColor.Fprintf(os.Stderr, "Error saving configuration: %v\n", err)
@@ -366,7 +362,7 @@ var sshImportCmd = &cobra.Command{
 			if pHost.KeyPath != "" {
 				fmt.Printf("     Key: %s\n", pHost.KeyPath)
 			}
-			importableHosts = append(importableHosts, pHost) // Add to list of hosts we can actually import
+			importableHosts = append(importableHosts, pHost)
 		}
 
 		if len(importableHosts) == 0 {
@@ -424,19 +420,19 @@ var sshImportCmd = &cobra.Command{
 			bmName := pHost.Alias
 			if _, exists := currentConfigNames[bmName]; exists {
 				errorColor.Fprintf(os.Stderr, "Error: Name '%s' conflicts with an existing host. Skipping import.\n", bmName)
-				continue // Skip this host
+				continue
 			}
 
 			remoteRoot, err := promptString("Remote Root Path (absolute path for projects):", true)
 			if err != nil {
 				errorColor.Fprintf(os.Stderr, "Error reading remote root for '%s': %v. Skipping import.\n", bmName, err)
-				continue // Skip this host
+				continue
 			}
 
 			bmHost, err := sshconfig.ConvertToBucketManagerHost(pHost, bmName, remoteRoot)
 			if err != nil {
 				errorColor.Fprintf(os.Stderr, "Error converting host '%s': %v. Skipping import.\n", bmName, err)
-				continue // Skip this host
+				continue
 			}
 
 			// If the imported host doesn't have a key path, prompt for auth details
@@ -445,7 +441,7 @@ var sshImportCmd = &cobra.Command{
 				err = promptForAuthDetails(&bmHost, false, "") // isEditing=false
 				if err != nil {
 					errorColor.Fprintf(os.Stderr, "Error getting authentication details for '%s': %v. Skipping import.\n", bmName, err)
-					continue // Skip this host
+					continue
 				}
 			}
 
@@ -460,7 +456,6 @@ var sshImportCmd = &cobra.Command{
 			return
 		}
 
-		// Save the updated configuration
 		err = config.SaveConfig(cfg)
 		if err != nil {
 			errorColor.Fprintf(os.Stderr, "\nError saving configuration: %v\n", err)
@@ -475,17 +470,14 @@ var sshImportCmd = &cobra.Command{
 // --- Initialization ---
 
 func init() {
-	// Add ssh subcommands
 	sshCmd.AddCommand(sshListCmd)
 	sshCmd.AddCommand(sshAddCmd)
 	sshCmd.AddCommand(sshEditCmd)
 	sshCmd.AddCommand(sshRemoveCmd)
 	sshCmd.AddCommand(sshImportCmd)
 
-	// Add ssh command to config command
 	configCmd.AddCommand(sshCmd)
 
-	// Add config command to root command
 	rootCmd.AddCommand(configCmd)
 }
 

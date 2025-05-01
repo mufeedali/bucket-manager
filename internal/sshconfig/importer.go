@@ -59,7 +59,6 @@ func ParseSSHConfig() ([]PotentialHost, error) {
 
 	var potentialHosts []PotentialHost
 
-	// Iterate through hosts defined in the ssh config
 	for _, host := range cfg.Hosts {
 		// We are interested in hosts with specific aliases (not wildcard '*')
 		if len(host.Patterns) == 0 || host.Patterns[0].String() == "*" {
@@ -79,7 +78,7 @@ func ParseSSHConfig() ([]PotentialHost, error) {
 			hostname = alias
 		}
 
-		port := 22 // Default port
+		port := 22
 		if portStr != "" {
 			p, err := strconv.Atoi(portStr)
 			if err == nil {

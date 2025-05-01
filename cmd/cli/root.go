@@ -106,17 +106,15 @@ func projectCompletionFunc(cmd *cobra.Command, args []string, toComplete string)
 			errors = append(errors, e)
 		}
 	}()
-	wg.Wait() // Wait for channels to close
+	wg.Wait()
 
 	if len(errors) > 0 {
 		// Log first error to stderr for debugging completion issues
 		fmt.Fprintf(os.Stderr, "completion error finding projects: %v\n", errors[0])
-		// Optionally log all errors? For now, just the first.
-		// return nil, cobra.ShellCompDirectiveError // Can still provide completions based on partial results
 	}
 
 	var projectIdentifiers []string
-	for _, p := range projects { // Iterate over the collected slice
+	for _, p := range projects {
 		identifier := fmt.Sprintf("%s (%s)", p.Name, p.ServerName)
 		// Only suggest projects that start with the currently typed string
 		if strings.HasPrefix(identifier, toComplete) {
@@ -138,19 +136,15 @@ var rootCmd = &cobra.Command{
 Discovers projects in standard local directories (~/bucket, ~/compose-bucket)
 and on remote hosts configured via SSH (~/.config/bucket-manager/config.yaml).`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// Ensure the config directory exists
 		if err := config.EnsureConfigDir(); err != nil {
 			return fmt.Errorf("failed to ensure config directory: %w", err)
 		}
-		// Initialize SSH Manager
 		sshManager = ssh.NewManager()
-		// Pass manager to discovery and runner packages
 		discovery.InitSSHManager(sshManager)
 		runner.InitSSHManager(sshManager)
 		return nil
 	},
 	PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
-		// Close SSH connections when CLI exits
 		if sshManager != nil {
 			sshManager.CloseAll()
 		}
@@ -167,7 +161,6 @@ func RunCLI() {
 }
 
 func init() {
-	// Add commands to root
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(upCmd)
 	rootCmd.AddCommand(downCmd)
@@ -181,12 +174,12 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List discovered Podman Compose projects (local and remote)",
 	Run: func(cmd *cobra.Command, args []string) {
-		statusColor.Println("Discovering projects...") // Indicate discovery start
+		statusColor.Println("Discovering projects...")
 		projectChan, errorChan, _ := discovery.FindProjects()
 
 		var collectedErrors []error
 		var projectsFound bool
-		var wg sync.WaitGroup // WaitGroup to wait for error channel reading
+		var wg sync.WaitGroup
 		wg.Add(1)
 
 		// Goroutine to collect errors and print them as they arrive
@@ -199,23 +192,22 @@ var listCmd = &cobra.Command{
 		}()
 
 		// Process projects as they arrive
-		fmt.Println("\nDiscovered projects:") // Print header immediately
+		fmt.Println("\nDiscovered projects:")
 
 		// Start spinner while waiting for all projects
-		s := spinner.New(spinner.CharSets[14], 100*time.Millisecond) // Use a suitable charset
-		s.Color("cyan")                                              // Add color
+		s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
+		s.Color("cyan")
 		s.Suffix = " Loading remote projects..."
 		s.Start()
 
 		for project := range projectChan {
-			s.Stop() // Stop spinner briefly to print project
+			s.Stop()
 			projectsFound = true
 			fmt.Printf("- %s (%s)\n", project.Name, identifierColor.Sprint(project.ServerName))
-			s.Restart() // Restart spinner after printing
+			s.Restart()
 		}
-		s.Stop() // Stop spinner permanently after loop finishes
+		s.Stop()
 
-		// Wait for error collection to finish
 		wg.Wait()
 
 		// Final status messages
@@ -241,7 +233,7 @@ func runProjectAction(action string, args []string) {
 	}
 	projectIdentifier := args[0]
 
-	statusColor.Println("Discovering projects...") // Indicate discovery start
+	statusColor.Println("Discovering projects...")
 	// Collect all projects and errors first for action commands
 	projectChan, errorChan, _ := discovery.FindProjects()
 	var allProjects []discovery.Project
@@ -260,7 +252,7 @@ func runProjectAction(action string, args []string) {
 			errors = append(errors, e)
 		}
 	}()
-	wg.Wait() // Wait for discovery to complete
+	wg.Wait()
 
 	if len(errors) > 0 {
 		errorColor.Fprintln(os.Stderr, "\nErrors during project discovery:")
@@ -275,7 +267,7 @@ func runProjectAction(action string, args []string) {
 		os.Exit(1)
 	}
 
-	targetProject, err := findProjectByIdentifier(allProjects, projectIdentifier) // Use collected slice
+	targetProject, err := findProjectByIdentifier(allProjects, projectIdentifier)
 	if err != nil {
 		errorColor.Fprintf(os.Stderr, "\nError: %v\n", err)
 		os.Exit(1)
@@ -296,7 +288,7 @@ func runProjectAction(action string, args []string) {
 		os.Exit(1)
 	}
 
-	err = runSequence(targetProject, sequence) // Pass the full project struct
+	err = runSequence(targetProject, sequence)
 	if err != nil {
 		errorColor.Fprintf(os.Stderr, "\n'%s' action failed for %s (%s): %v\n", action, targetProject.Name, targetProject.ServerName, err)
 		os.Exit(1)
@@ -374,7 +366,6 @@ Otherwise, shows status for all discovered projects.`,
 			}
 		}()
 
-		// Start spinner
 		s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
 		s.Color("cyan")
 		s.Suffix = " Discovering and checking status..."
@@ -396,8 +387,8 @@ Otherwise, shows status for all discovered projects.`,
 					go func(p discovery.Project) { // Pass project copy to goroutine
 						defer statusWg.Done()
 						statusInfo := runner.GetProjectStatus(p)
-						statusChan <- statusInfo // Send result to status channel
-					}(project) // Pass the project copy
+						statusChan <- statusInfo
+					}(project)
 				}
 			}
 
@@ -408,7 +399,7 @@ Otherwise, shows status for all discovered projects.`,
 
 		// Process status results as they arrive
 		for statusInfo := range statusChan {
-			s.Stop() // Stop spinner to print status
+			s.Stop()
 
 			fmt.Printf("\nProject: %s (%s) ", statusInfo.Project.Name, identifierColor.Sprint(statusInfo.Project.ServerName))
 			switch statusInfo.OverallStatus {
@@ -425,7 +416,7 @@ Otherwise, shows status for all discovered projects.`,
 				} else {
 					errorColor.Fprintf(os.Stderr, "  Unknown error checking status.\n")
 				}
-			default: // StatusUnknown
+			default:
 				fmt.Printf("[%s]\n", statusInfo.OverallStatus)
 			}
 
@@ -444,14 +435,13 @@ Otherwise, shows status for all discovered projects.`,
 				}
 			}
 
-			s.Restart() // Restart spinner after printing
+			s.Restart()
 		}
-		s.Stop() // Stop spinner permanently
+		s.Stop()
 
 		// Wait for error collection goroutine to finish *after* processing all statuses
 		errWg.Wait()
 
-		// Final status messages
 		if !projectsFound && len(collectedErrors) == 0 {
 			fmt.Println("\nNo Podman Compose projects found locally or on configured remote hosts.")
 		} else if !projectsFound && len(collectedErrors) > 0 {
@@ -478,10 +468,10 @@ func runSequence(project discovery.Project, sequence []runner.CommandStep) error
 		outChan, errChan := runner.StreamCommand(step)
 
 		var stepErr error
-		outputDone := make(chan struct{}) // Channel to wait for output goroutine to finish
+		outputDone := make(chan struct{})
 
 		go func() {
-			defer close(outputDone) // Signal that this goroutine is done
+			defer close(outputDone)
 			for line := range outChan {
 				if line.IsError {
 					errorColor.Fprintln(os.Stderr, line.Line)
@@ -494,7 +484,7 @@ func runSequence(project discovery.Project, sequence []runner.CommandStep) error
 		// Wait for the error channel OR the output channel to close (signaling command end)
 		stepErr = <-errChan // Blocks until an error is sent or the channel is closed
 
-		<-outputDone // Wait for the output processing goroutine to finish reading everything
+		<-outputDone
 
 		if stepErr != nil {
 			return fmt.Errorf("step '%s' failed: %w", step.Name, stepErr)

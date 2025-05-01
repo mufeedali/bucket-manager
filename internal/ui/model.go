@@ -9,7 +9,6 @@ import (
 	"bucket-manager/internal/runner"
 	"bucket-manager/internal/sshconfig"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -66,24 +65,142 @@ const (
 	authMethodPassword
 )
 
-// KeyMap defines additional keybindings.
+// KeyMap defines the application's keybindings.
 type KeyMap struct {
-	Config key.Binding
+	// General
+	Up       key.Binding
+	Down     key.Binding
+	Left     key.Binding
+	Right    key.Binding
+	PgUp     key.Binding
+	PgDown   key.Binding
+	Home     key.Binding
+	End      key.Binding
+	Help     key.Binding // Might use later for a dedicated help view
+	Quit     key.Binding
+	Enter    key.Binding
+	Esc      key.Binding
+	Back     key.Binding // Often same as Esc
+	Select   key.Binding // e.g., Spacebar
+	Tab      key.Binding
+	ShiftTab key.Binding
+	Yes      key.Binding
+	No       key.Binding
+
+	// Project List Specific
+	Config        key.Binding
+	UpAction      key.Binding
+	DownAction    key.Binding
+	RefreshAction key.Binding
+
+	// SSH Config List Specific
 	Remove key.Binding
 	Add    key.Binding
 	Import key.Binding
 	Edit   key.Binding
+
+	// Form Specific (Add/Edit/Import Details)
+	ToggleDisabled key.Binding // Spacebar in Edit form
 }
 
 // DefaultKeyMap defines the default keybindings.
 var DefaultKeyMap = KeyMap{
+	// General
+	Up: key.NewBinding(
+		key.WithKeys("up", "k"),
+		key.WithHelp("↑/k", "up"),
+	),
+	Down: key.NewBinding(
+		key.WithKeys("down", "j"),
+		key.WithHelp("↓/j", "down"),
+	),
+	Left: key.NewBinding(
+		key.WithKeys("left", "h"),
+		key.WithHelp("←/h", "left"),
+	),
+	Right: key.NewBinding(
+		key.WithKeys("right", "l"),
+		key.WithHelp("→/l", "right"),
+	),
+	PgUp: key.NewBinding(
+		key.WithKeys("pgup"),
+		key.WithHelp("pgup", "page up"),
+	),
+	PgDown: key.NewBinding(
+		key.WithKeys("pgdown"),
+		key.WithHelp("pgdn", "page down"),
+	),
+	Home: key.NewBinding(
+		key.WithKeys("home"),
+		key.WithHelp("home", "home"),
+	),
+	End: key.NewBinding(
+		key.WithKeys("end"),
+		key.WithHelp("end", "end"),
+	),
+	Help: key.NewBinding(
+		key.WithKeys("?"),
+		key.WithHelp("?", "help"),
+	),
+	Quit: key.NewBinding(
+		key.WithKeys("q", "ctrl+c"),
+		key.WithHelp("q/ctrl+c", "quit"),
+	),
+	Enter: key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "select/confirm"),
+	),
+	Esc: key.NewBinding(
+		key.WithKeys("esc"),
+		key.WithHelp("esc", "back/cancel"),
+	),
+	Back: key.NewBinding( // Often same as Esc, but can be context-specific
+		key.WithKeys("esc", "b"), // Add 'b' for back consistency
+		key.WithHelp("esc/b", "back"),
+	),
+	Select: key.NewBinding(
+		key.WithKeys(" "),
+		key.WithHelp("space", "toggle select"),
+	),
+	Tab: key.NewBinding(
+		key.WithKeys("tab"),
+		key.WithHelp("tab", "next field"),
+	),
+	ShiftTab: key.NewBinding(
+		key.WithKeys("shift+tab"),
+		key.WithHelp("shift+tab", "prev field"),
+	),
+	Yes: key.NewBinding(
+		key.WithKeys("y"),
+		key.WithHelp("y", "yes"),
+	),
+	No: key.NewBinding(
+		key.WithKeys("n"),
+		key.WithHelp("n", "no"),
+	),
+
+	// Project List Specific
 	Config: key.NewBinding(
 		key.WithKeys("c"),
 		key.WithHelp("c", "manage ssh config"),
 	),
+	UpAction: key.NewBinding(
+		key.WithKeys("u"),
+		key.WithHelp("u", "up project(s)"),
+	),
+	DownAction: key.NewBinding(
+		key.WithKeys("d"), // Changed from 'd' in config list
+		key.WithHelp("d", "down project(s)"),
+	),
+	RefreshAction: key.NewBinding(
+		key.WithKeys("r"),
+		key.WithHelp("r", "refresh project(s)"),
+	),
+
+	// SSH Config List Specific
 	Remove: key.NewBinding(
-		key.WithKeys("d"),
-		key.WithHelp("d", "remove host"),
+		key.WithKeys("delete", "backspace"), // More standard delete keys
+		key.WithHelp("del/bksp", "remove host"),
 	),
 	Add: key.NewBinding(
 		key.WithKeys("a"),
@@ -97,33 +214,41 @@ var DefaultKeyMap = KeyMap{
 		key.WithKeys("e"),
 		key.WithHelp("e", "edit host"),
 	),
+
+	// Form Specific
+	ToggleDisabled: key.NewBinding(
+		key.WithKeys(" "), // Spacebar used for this toggle in edit form
+		key.WithHelp("space", "toggle disabled"),
+	),
 }
 
 type model struct {
-	keymap           KeyMap
-	projects         []discovery.Project
-	cursor           int             // project list cursor
-	configCursor     int             // config list cursor
-	hostToRemove     *config.SSHHost // For remove confirmation
-	hostToEdit       *config.SSHHost // For edit form
-	configuredHosts  []config.SSHHost
-	viewport         viewport.Model
-	currentState     state
-	isDiscovering    bool // Flag to track discovery process
-	currentSequence  []runner.CommandStep
-	currentStepIndex int
-	outputContent    string
-	lastError        error
-	discoveryErrors  []error // Store multiple discovery errors
-	ready            bool
-	width            int
-	height           int
-	outputChan       <-chan runner.OutputLine
-	errorChan        <-chan error
-	projectStatuses  map[string]runner.ProjectRuntimeInfo
-	loadingStatus    map[string]bool
-	detailedProject  *discovery.Project
-	sequenceProject  *discovery.Project
+	keymap              KeyMap
+	projects            []discovery.Project
+	cursor              int              // project list cursor
+	selectedProjectIdxs map[int]struct{} // Indices of selected projects
+	configCursor        int              // config list cursor
+	hostToRemove        *config.SSHHost  // For remove confirmation
+	hostToEdit          *config.SSHHost  // For edit form
+	configuredHosts     []config.SSHHost
+	viewport            viewport.Model
+	currentState        state
+	isDiscovering       bool // Flag to track discovery process
+	currentSequence     []runner.CommandStep
+	currentStepIndex    int
+	outputContent       string
+	lastError           error
+	discoveryErrors     []error // Store multiple discovery errors
+	ready               bool
+	width               int
+	height              int
+	outputChan          <-chan runner.OutputLine
+	errorChan           <-chan error
+	projectStatuses     map[string]runner.ProjectRuntimeInfo
+	loadingStatus       map[string]bool
+	detailedProject     *discovery.Project
+	sequenceProject     *discovery.Project   // Tracks the *first* project for display during sequence
+	projectsInSequence  []*discovery.Project // Tracks *all* projects in the current sequence run
 
 	// SSH Config Add Form State
 	formInputs     []textinput.Model
@@ -207,7 +332,7 @@ func findProjectsCmd() tea.Cmd {
 		// Goroutine to read projects and send messages
 		go func() {
 			for p := range projectChan {
-				if BubbleProgram != nil { // Check if program is initialized
+				if BubbleProgram != nil {
 					BubbleProgram.Send(projectDiscoveredMsg{project: p})
 				}
 			}
@@ -240,7 +365,7 @@ func listenForProjectsCmd(projectChan <-chan discovery.Project) tea.Cmd {
 	return func() tea.Msg {
 		project, ok := <-projectChan
 		if !ok {
-			return nil // Channel closed
+			return nil
 		}
 		return projectDiscoveredMsg{project: project}
 	}
@@ -252,7 +377,7 @@ func listenForDiscoveryErrorsCmd(errorChan <-chan error) tea.Cmd {
 	return func() tea.Msg {
 		err, ok := <-errorChan
 		if !ok {
-			return nil // Channel closed
+			return nil
 		}
 		return discoveryErrorMsg{err: err}
 	}
@@ -294,7 +419,6 @@ func saveEditedSshHostCmd(originalName string, editedHost config.SSHHost) tea.Cm
 
 		found := false
 		for i := range cfg.SSHHosts {
-			// Find the host by its original name
 			if cfg.SSHHosts[i].Name == originalName {
 				// Check for name conflict if the name was changed
 				if originalName != editedHost.Name {
@@ -304,7 +428,6 @@ func saveEditedSshHostCmd(originalName string, editedHost config.SSHHost) tea.Cm
 						}
 					}
 				}
-				// Update the host in the slice
 				cfg.SSHHosts[i] = editedHost
 				found = true
 				break
@@ -319,7 +442,7 @@ func saveEditedSshHostCmd(originalName string, editedHost config.SSHHost) tea.Cm
 		if err != nil {
 			return sshHostEditedMsg{fmt.Errorf("failed to save config after edit: %w", err)}
 		}
-		return sshHostEditedMsg{nil} // Success
+		return sshHostEditedMsg{nil}
 	}
 }
 
@@ -343,7 +466,7 @@ func saveNewSshHostCmd(newHost config.SSHHost) tea.Cmd {
 		if err != nil {
 			return sshHostAddedMsg{fmt.Errorf("failed to save config: %w", err)}
 		}
-		return sshHostAddedMsg{nil} // Success
+		return sshHostAddedMsg{nil}
 	}
 }
 
@@ -363,16 +486,14 @@ func removeSshHostCmd(hostToRemove config.SSHHost) tea.Cmd {
 			}
 		}
 		if !found {
-			// Return stepFinishedMsg with the error field set
 			return stepFinishedMsg{err: fmt.Errorf("host '%s' not found in config during removal", hostToRemove.Name)}
 		}
 		cfg.SSHHosts = newHosts
 		err = config.SaveConfig(cfg)
 		if err != nil {
-			// Return stepFinishedMsg with the error field set
 			return stepFinishedMsg{err: fmt.Errorf("failed to save config after remove: %w", err)}
 		}
-		return stepFinishedMsg{nil} // nil error signals success
+		return stepFinishedMsg{nil}
 	}
 }
 
@@ -389,7 +510,7 @@ func parseSshConfigCmd() tea.Cmd {
 func saveImportedSshHostsCmd(hostsToSave []config.SSHHost) tea.Cmd {
 	return func() tea.Msg {
 		if len(hostsToSave) == 0 {
-			return sshHostsImportedMsg{importedCount: 0, err: nil} // Nothing to save
+			return sshHostsImportedMsg{importedCount: 0, err: nil}
 		}
 
 		cfg, err := config.LoadConfig()
@@ -412,7 +533,7 @@ func saveImportedSshHostsCmd(hostsToSave []config.SSHHost) tea.Cmd {
 				continue
 			}
 			finalHostsToAdd = append(finalHostsToAdd, newHost)
-			currentNames[newHost.Name] = true // Add to map for checks within this batch
+			currentNames[newHost.Name] = true
 		}
 
 		if len(finalHostsToAdd) == 0 && skippedCount > 0 {
@@ -471,17 +592,19 @@ func waitForErrorCmd(errChan <-chan error) tea.Cmd {
 
 func InitialModel() model {
 	m := model{
-		keymap:          DefaultKeyMap,
-		currentState:    stateLoadingProjects, // Start in loading state
-		isDiscovering:   true,                 // Mark discovery as active
-		cursor:          0,
-		configCursor:    0,
-		projectStatuses: make(map[string]runner.ProjectRuntimeInfo),
-		loadingStatus:   make(map[string]bool),
-		configuredHosts: []config.SSHHost{},
-		discoveryErrors: []error{}, // Initialize error slice
-		detailedProject: nil,
-		sequenceProject: nil,
+		keymap:              DefaultKeyMap,
+		currentState:        stateLoadingProjects,
+		isDiscovering:       true,
+		cursor:              0,
+		selectedProjectIdxs: make(map[int]struct{}),
+		configCursor:        0,
+		projectStatuses:     make(map[string]runner.ProjectRuntimeInfo),
+		loadingStatus:       make(map[string]bool),
+		configuredHosts:     []config.SSHHost{},
+		discoveryErrors:     []error{},
+		detailedProject:     nil,
+		sequenceProject:     nil,
+		projectsInSequence:  nil,
 	}
 	return m
 }
@@ -494,7 +617,7 @@ func createAddForm() []textinput.Model {
 	// Name
 	t = textinput.New()
 	t.Placeholder = "Unique Name (e.g., server1)"
-	t.Focus() // Start with the first field focused
+	t.Focus()
 	t.CharLimit = 50
 	t.Width = 40
 	inputs[0] = t
@@ -518,10 +641,10 @@ func createAddForm() []textinput.Model {
 	t.Placeholder = "Port (default 22)"
 	t.CharLimit = 5
 	t.Width = 20
-	t.Validate = func(s string) error { // Basic validation for integer
+	t.Validate = func(s string) error {
 		if s == "" {
 			return nil
-		} // Allow empty for default
+		}
 		_, err := strconv.Atoi(s)
 		return err
 	}
@@ -568,7 +691,7 @@ func createEditForm(host config.SSHHost) ([]textinput.Model, int, bool) {
 	t = textinput.New()
 	t.Placeholder = "Unique Name"
 	t.SetValue(host.Name)
-	t.Focus() // Start with the first field focused
+	t.Focus()
 	t.CharLimit = 50
 	t.Width = 40
 	inputs[0] = t
@@ -593,16 +716,16 @@ func createEditForm(host config.SSHHost) ([]textinput.Model, int, bool) {
 	t = textinput.New()
 	t.Placeholder = "Port (default 22)"
 	portStr := ""
-	if host.Port != 0 { // Only set value if not default
+	if host.Port != 0 {
 		portStr = strconv.Itoa(host.Port)
 	}
 	t.SetValue(portStr)
 	t.CharLimit = 5
 	t.Width = 20
-	t.Validate = func(s string) error { // Basic validation for integer
+	t.Validate = func(s string) error {
 		if s == "" {
 			return nil
-		} // Allow empty for default
+		}
 		_, err := strconv.Atoi(s)
 		return err
 	}
@@ -649,10 +772,10 @@ func createImportDetailsForm(pHost sshconfig.PotentialHost) ([]textinput.Model, 
 	var t textinput.Model
 	initialAuthMethod := authMethodAgent // Default to agent
 
-	// Remote Root (Index 4) - Always needed
+	// Remote Root (Index 4)
 	t = textinput.New()
 	t.Placeholder = "Remote Root Path (e.g., /home/user/projects)"
-	t.Focus() // Start focus here
+	t.Focus()
 	t.CharLimit = 200
 	t.Width = 60
 	inputs[4] = t
@@ -685,56 +808,73 @@ func createImportDetailsForm(pHost sshconfig.PotentialHost) ([]textinput.Model, 
 	return inputs, initialAuthMethod
 }
 
-// updateInputs updates the focused text input component for the Add form
+// updateInputs updates the focused text input component for the Add/Edit/ImportDetails forms
 func (m *model) updateInputs(msg tea.Msg) tea.Cmd {
 	var cmds []tea.Cmd
-	// Only update the focused input
-	// Check if formInputs is initialized and we are in a form state
-	if (m.currentState == stateSshConfigAddForm || m.currentState == stateSshConfigEditForm) && m.formInputs != nil && m.formFocusIndex >= 0 && m.formFocusIndex < len(m.formInputs) {
+	if (m.currentState == stateSshConfigAddForm || m.currentState == stateSshConfigEditForm) && m.formInputs != nil {
 		var cmd tea.Cmd
-		// Only pass key messages to the input field if it's one of the text inputs
-		// (formFocusIndex might point to Auth Method or Disabled toggle)
+		actualInputIndex := -1
 		isTextInputFocused := false
-		numVisibleInputs := 5 // Base: Name, Hostname, User, Port, RemoteRoot
-		if m.formAuthMethod == authMethodKey {
-			numVisibleInputs++
-		} // KeyPath
-		if m.formAuthMethod == authMethodPassword {
-			numVisibleInputs++
-		} // Password
 
-		if m.formFocusIndex < numVisibleInputs {
+		switch m.formFocusIndex {
+		case 0, 1, 2, 3, 4: // Name, Hostname, User, Port, RemoteRoot (Add/Edit)
+			actualInputIndex = m.formFocusIndex
 			isTextInputFocused = true
+		case 5: // Could be Auth Method (Add/Edit), KeyPath (Edit), or Password (Edit) depending on context
+			if m.currentState == stateSshConfigAddForm {
+				// In Add form, index 5 is Auth Method if Agent/Password, or KeyPath if Key
+				if m.formAuthMethod == authMethodKey {
+					actualInputIndex = 5 // KeyPath
+					isTextInputFocused = true
+				}
+				// Otherwise, it's Auth Method (handled by navigation, not input update)
+			} else { // Edit form
+				// In Edit form, index 5 is Auth Method
+				// Index 6 is KeyPath (if visible)
+				// Index 7 is Password (if visible)
+				// Index 8 is Disabled toggle
+				// Input update is handled below based on visibility
+			}
+		case 6: // Could be KeyPath (Add), Password (Add), Auth Method (Edit), Disabled (Edit)
+			if m.currentState == stateSshConfigAddForm {
+				// In Add form, index 6 is Password if Password auth, or Auth Method if Key auth
+				if m.formAuthMethod == authMethodPassword {
+					actualInputIndex = 6 // Password
+					isTextInputFocused = true
+				}
+				// Otherwise, it's Auth Method (handled by navigation)
+			} else { // Edit form
+				// Index 6 is KeyPath if visible
+				if m.formAuthMethod == authMethodKey {
+					actualInputIndex = 5 // KeyPath maps to input index 5
+					isTextInputFocused = true
+				}
+			}
+		case 7: // Could be Password (Edit)
+			if m.currentState == stateSshConfigEditForm {
+				if m.formAuthMethod == authMethodPassword {
+					actualInputIndex = 6 // Password maps to input index 6
+					isTextInputFocused = true
+				}
+			}
+			// case 8: // Disabled toggle (Edit form) - not a text input
 		}
 
-		if isTextInputFocused {
-			// Only pass key messages to the input field
+		if isTextInputFocused && actualInputIndex >= 0 && actualInputIndex < len(m.formInputs) {
 			if keyMsg, ok := msg.(tea.KeyMsg); ok {
-				// Skip Tab/Shift+Tab/Enter/Esc/Space as they are handled separately for navigation/submission/toggles
 				k := keyMsg.String()
-				if k != "tab" && k != "shift+tab" && k != "enter" && k != "esc" && k != " " {
-					// Determine the actual input index based on auth method
-					inputIndex := m.formFocusIndex
-					if m.formAuthMethod != authMethodKey && inputIndex == 5 { // Skip KeyPath index if not visible
-						// This logic might need refinement if indices shift significantly
-						// For now, assume indices 0-4 are always present, 5 is KeyPath, 6 is Password
-						// If focus is on 5 but KeyPath isn't visible, something is wrong, but let's prevent panic
-						// The navigation logic should prevent focus from landing here incorrectly.
-					} else if m.formAuthMethod != authMethodPassword && inputIndex == 6 { // Skip Password index if not visible
-						// Similar to above
-					}
+				isSpaceAllowed := k != " " || !(m.currentState == stateSshConfigEditForm && m.formFocusIndex == m.getDisabledToggleFocusIndex())
 
-					if inputIndex < len(m.formInputs) {
-						t := m.formInputs[inputIndex]
-						m.formInputs[inputIndex], cmd = t.Update(msg)
-						cmds = append(cmds, cmd)
-					}
+				if k != "tab" && k != "shift+tab" && k != "enter" && k != "esc" && isSpaceAllowed {
+					t := m.formInputs[actualInputIndex]
+					m.formInputs[actualInputIndex], cmd = t.Update(msg)
+					cmds = append(cmds, cmd)
 				}
 			}
 		}
 	} else if m.currentState == stateSshConfigImportDetails && m.formInputs != nil {
-		// Similar logic for the Import Details form, but might focus on different indices
-		var cmd tea.Cmd // Declare cmd here
+		// Logic for Import Details form
+		var cmd tea.Cmd
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
 			k := keyMsg.String()
 			// Allow input only for the visible fields in the import details form
@@ -760,9 +900,7 @@ func (m *model) updateInputs(msg tea.Msg) tea.Cmd {
 				}
 			}
 
-			// Allow 'm' key through now
 			if isFocusableField && actualInputIndex != -1 && k != "tab" && k != "shift+tab" && k != "enter" && k != "esc" {
-				// Ensure the input exists before updating
 				if actualInputIndex < len(m.formInputs) {
 					t := m.formInputs[actualInputIndex]
 					m.formInputs[actualInputIndex], cmd = t.Update(msg)
@@ -775,15 +913,13 @@ func (m *model) updateInputs(msg tea.Msg) tea.Cmd {
 }
 
 func (m *model) Init() tea.Cmd {
-	// Start discovery process; results will arrive via messages
 	return findProjectsCmd()
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-	var vpCmd tea.Cmd // Viewport command
+	var vpCmd tea.Cmd
 
-	// Determine if the viewport should be considered active for input handling
 	viewportActive := m.currentState == stateRunningSequence || m.currentState == stateSequenceError
 
 	switch msg := msg.(type) {
@@ -799,23 +935,46 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.Width = m.width
 			m.viewport.Height = m.height - headerHeight - footerHeight
 		}
-		// Ensure viewport content is updated if it's active
 		if m.currentState == stateRunningSequence || m.currentState == stateSequenceError {
 			m.viewport.SetContent(m.outputContent)
 		}
 
 	case tea.KeyMsg:
-		// Give viewport first dibs on keys when it's active
 		if viewportActive {
+			switch {
+			case key.Matches(msg, m.keymap.Quit):
+				return m, tea.Quit
+			case key.Matches(msg, m.keymap.Back), key.Matches(msg, m.keymap.Enter):
+				for _, proj := range m.projectsInSequence {
+					if proj != nil {
+						projID := proj.Identifier()
+						if !m.loadingStatus[projID] {
+							m.loadingStatus[projID] = true
+							cmds = append(cmds, fetchProjectStatusCmd(*proj))
+						}
+					}
+				}
+				m.currentState = stateProjectList
+				m.outputContent = ""
+				m.lastError = nil
+				m.currentSequence = nil
+				m.currentStepIndex = 0
+				m.sequenceProject = nil
+				m.projectsInSequence = nil
+				m.viewport.GotoTop()
+				return m, tea.Batch(cmds...)
+			}
+
 			m.viewport, vpCmd = m.viewport.Update(msg)
 			cmds = append(cmds, vpCmd)
-			// If viewport handled the key (e.g., scrolling), don't process further general keys.
-			// This assumes viewport.Update indicates consumption, which might need adjustment
-			// based on bubbletea/viewport behavior. For now, let's assume if vpCmd is not nil,
-			// the viewport might have handled it. A more robust check might be needed.
-			// However, allowing fallthrough for now to handle Back/Quit even during scroll.
+			// We might need a more robust way to check if viewport consumed the key.
+			// For now, if vpCmd is not nil, assume it might have been handled.
+			if vpCmd != nil {
+				return m, tea.Batch(cmds...)
+			}
 		}
 
+		// --- State-Specific Key Handling (if viewport not active or didn't handle) ---
 		switch m.currentState {
 		case stateProjectList:
 			switch {
@@ -823,62 +982,41 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentState = stateSshConfigList
 				m.configCursor = 0
 				cmds = append(cmds, loadSshConfigCmd())
+			case key.Matches(msg, m.keymap.Quit):
+				return m, tea.Quit
 			default:
-				// Let handleProjectListKeys handle navigation and actions
-				// It returns cmds, so append them
 				cmds = append(cmds, m.handleProjectListKeys(msg)...)
 			}
 
 		case stateRunningSequence, stateSequenceError:
-			// Only handle quit/back keys if the viewport is active.
-			// The viewport itself handles scrolling keys via the update above.
-			if viewportActive {
-				// Check for Back/Quit keys regardless of whether viewport handled scrolling.
-				if key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))) {
-					return m, tea.Quit
-				}
-				if key.Matches(msg, key.NewBinding(key.WithKeys("enter", "esc", "b"))) {
-					projectToRefresh := m.sequenceProject
-					m.currentState = stateProjectList
-					m.outputContent = ""
-					m.lastError = nil
-					m.currentSequence = nil
-					m.currentStepIndex = 0
-					m.sequenceProject = nil
-					m.viewport.GotoTop()
-					if projectToRefresh != nil {
-						projID := projectToRefresh.Identifier()
-						if !m.loadingStatus[projID] {
-							m.loadingStatus[projID] = true
-							cmds = append(cmds, fetchProjectStatusCmd(*projectToRefresh))
-						}
-					}
-				}
+			// Handled by viewportActive check above
+			if key.Matches(msg, m.keymap.Quit) {
+				return m, tea.Quit
 			}
 
 		case stateProjectDetails:
-			if key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))) {
+			switch {
+			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
-			}
-			if key.Matches(msg, key.NewBinding(key.WithKeys("esc", "b"))) {
+			case key.Matches(msg, m.keymap.Back):
 				m.currentState = stateProjectList
 				m.detailedProject = nil
 			}
 
 		case stateSshConfigList:
 			switch {
-			case key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))):
+			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
-			case key.Matches(msg, key.NewBinding(key.WithKeys("esc", "b"))):
+			case key.Matches(msg, m.keymap.Back):
 				m.currentState = stateProjectList
 				m.lastError = nil
 				m.importError = nil  // Clear import messages
 				m.importInfoMsg = "" // Clear import messages
-			case key.Matches(msg, key.NewBinding(key.WithKeys("up", "k"))):
+			case key.Matches(msg, m.keymap.Up):
 				if m.configCursor > 0 {
 					m.configCursor--
 				}
-			case key.Matches(msg, key.NewBinding(key.WithKeys("down", "j"))):
+			case key.Matches(msg, m.keymap.Down):
 				if m.configCursor < len(m.configuredHosts)-1 {
 					m.configCursor++
 				}
@@ -886,7 +1024,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.configuredHosts) > 0 && m.configCursor < len(m.configuredHosts) {
 					m.hostToRemove = &m.configuredHosts[m.configCursor]
 					m.currentState = stateSshConfigRemoveConfirm
-					m.lastError = nil // Clear general error when entering confirmation
+					m.lastError = nil
 				}
 			case key.Matches(msg, m.keymap.Add):
 				m.formInputs = createAddForm()
@@ -894,8 +1032,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.formAuthMethod = authMethodAgent // Default to Agent
 				m.formError = nil
 				m.currentState = stateSshConfigAddForm
+				return m, tea.Batch(cmds...)
 			case key.Matches(msg, m.keymap.Import):
-				m.currentState = stateLoadingProjects // Use loading state temporarily
+				m.currentState = stateLoadingProjects
 				m.importError = nil
 				m.lastError = nil
 				cmds = append(cmds, parseSshConfigCmd())
@@ -906,91 +1045,89 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.formFocusIndex = 0
 					m.formError = nil
 					m.currentState = stateSshConfigEditForm
+					return m, tea.Batch(cmds...)
 				}
 			}
 
 		case stateSshConfigRemoveConfirm:
 			switch {
-			case key.Matches(msg, key.NewBinding(key.WithKeys("y"))):
+			case key.Matches(msg, m.keymap.Yes):
 				if m.hostToRemove != nil {
-					cmds = append(cmds, removeSshHostCmd(*m.hostToRemove)) // Call as function
+					cmds = append(cmds, removeSshHostCmd(*m.hostToRemove))
 					m.hostToRemove = nil
 					m.lastError = nil
-					// State will be changed back by stepFinishedMsg handler
 				} else {
-					m.currentState = stateSshConfigList // Go back if somehow no host was selected
+					m.currentState = stateSshConfigList
 				}
-			case key.Matches(msg, key.NewBinding(key.WithKeys("n", "esc", "b"))):
+			case key.Matches(msg, m.keymap.No), key.Matches(msg, m.keymap.Back):
 				m.currentState = stateSshConfigList
 				m.hostToRemove = nil
 				m.lastError = nil
-			case key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))):
+			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
 			}
 
 		case stateSshConfigAddForm:
-			// Handle form navigation, input, submission, cancellation
-			if key.Matches(msg, key.NewBinding(key.WithKeys("esc"))) {
+			switch {
+			case key.Matches(msg, m.keymap.Esc):
 				m.currentState = stateSshConfigList
-				m.formError = nil    // Clear form error on cancel
-				m.formInputs = nil   // Clear form inputs
-				m.importError = nil  // Clear import messages when returning
-				m.importInfoMsg = "" // Clear import messages when returning
-			} else if key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))) {
+				m.formError = nil
+				m.formInputs = nil
+				m.importError = nil
+				m.importInfoMsg = ""
+			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
-			} else {
-				// Handle form navigation and input
+			default:
 				cmds = append(cmds, m.handleSshAddFormKeys(msg)...)
 			}
 
 		case stateSshConfigEditForm:
-			if key.Matches(msg, key.NewBinding(key.WithKeys("esc"))) {
+			switch {
+			case key.Matches(msg, m.keymap.Esc):
 				m.currentState = stateSshConfigList
 				m.formError = nil
 				m.formInputs = nil
 				m.hostToEdit = nil
-				m.importError = nil  // Clear import messages when returning
-				m.importInfoMsg = "" // Clear import messages when returning
-			} else if key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))) {
+				m.importError = nil
+				m.importInfoMsg = ""
+			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
-			} else {
-				// Handle form navigation, input, submission
+			default:
 				cmds = append(cmds, m.handleSshEditFormKeys(msg)...)
 			}
 
 		case stateSshConfigImportSelect:
 			switch {
-			case key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))):
+			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
-			case key.Matches(msg, key.NewBinding(key.WithKeys("esc", "b"))):
+			case key.Matches(msg, m.keymap.Back):
 				m.currentState = stateSshConfigList
-				m.importableHosts = nil // Clear import state
+				m.importableHosts = nil
 				m.selectedImportIdxs = nil
-				m.importError = nil  // Clear import messages
-				m.importInfoMsg = "" // Clear import messages
+				m.importError = nil
+				m.importInfoMsg = ""
 				m.lastError = nil
-			case key.Matches(msg, key.NewBinding(key.WithKeys("up", "k"))):
+			case key.Matches(msg, m.keymap.Up):
 				if m.importCursor > 0 {
 					m.importCursor--
 				}
-			case key.Matches(msg, key.NewBinding(key.WithKeys("down", "j"))):
+			case key.Matches(msg, m.keymap.Down):
 				if m.importCursor < len(m.importableHosts)-1 {
 					m.importCursor++
 				}
-			case key.Matches(msg, key.NewBinding(key.WithKeys(" "))): // Spacebar to toggle selection
+			case key.Matches(msg, m.keymap.Select):
 				if _, ok := m.selectedImportIdxs[m.importCursor]; ok {
 					delete(m.selectedImportIdxs, m.importCursor)
 				} else {
 					m.selectedImportIdxs[m.importCursor] = struct{}{}
 				}
-			case key.Matches(msg, key.NewBinding(key.WithKeys("enter"))):
+			case key.Matches(msg, m.keymap.Enter):
 				if len(m.selectedImportIdxs) > 0 {
-					// Prepare for detail gathering
 					m.currentState = stateSshConfigImportDetails
-					m.hostsToConfigure = []config.SSHHost{} // Reset list of hosts ready to save
-					m.configuringHostIdx = 0                // Start with the first selected host
-					m.formError = nil                       // Clear any previous form errors
-					// TODO: Need to find the *actual* first selected index
+					m.hostsToConfigure = []config.SSHHost{}
+					m.configuringHostIdx = 0
+					m.formError = nil
+
 					firstSelectedIdx := -1
 					for i := 0; i < len(m.importableHosts); i++ {
 						if _, ok := m.selectedImportIdxs[i]; ok {
@@ -999,24 +1136,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 					if firstSelectedIdx != -1 {
-						// TODO: Prepare the form for the first host (e.g., create inputs)
-						// This logic will go into the stateSshConfigImportDetails handler/view
-						m.configuringHostIdx = firstSelectedIdx // Set the index to configure
-						// Prepare the form for the first selected host
-						m.configuringHostIdx = firstSelectedIdx // Set the index of the PotentialHost
+						m.configuringHostIdx = firstSelectedIdx
 						pHostToConfigure := m.importableHosts[m.configuringHostIdx]
 						m.formInputs, m.formAuthMethod = createImportDetailsForm(pHostToConfigure)
-						m.formFocusIndex = 0 // Focus the first field (Remote Root)
-						m.formError = nil    // Clear form error
+						m.formFocusIndex = 0
+						m.formError = nil
 					} else {
-						// Should not happen if len(selectedImportIdxs) > 0, but handle defensively
 						m.importError = fmt.Errorf("internal error: no selected host index found")
 						m.currentState = stateSshConfigList
 						m.importableHosts = nil
 						m.selectedImportIdxs = nil
 					}
 				} else {
-					// No hosts selected, just go back
 					m.importError = fmt.Errorf("no hosts selected for import")
 					m.currentState = stateSshConfigList
 					m.importableHosts = nil
@@ -1025,36 +1156,33 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case stateSshConfigImportDetails:
-			if key.Matches(msg, key.NewBinding(key.WithKeys("esc"))) {
-				// Cancel the entire import process
+			switch {
+			case key.Matches(msg, m.keymap.Esc):
 				m.currentState = stateSshConfigList
-				m.importError = fmt.Errorf("import cancelled") // Keep this specific error
-				m.importInfoMsg = ""                           // Clear info msg
+				m.importError = fmt.Errorf("import cancelled")
+				m.importInfoMsg = ""
 				m.importableHosts = nil
 				m.selectedImportIdxs = nil
 				m.hostsToConfigure = nil
 				m.formInputs = nil
-			} else if key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))) {
+			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
-			} else {
-				// Handle form navigation and input using a dedicated handler
+			default:
 				cmds = append(cmds, m.handleSshImportDetailsFormKeys(msg)...)
 			}
 
 		default: // Loading projects state
-			if key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))) {
+			if key.Matches(msg, m.keymap.Quit) {
 				return m, tea.Quit
 			}
 		}
 
 	case sshConfigParsedMsg:
-		// Received potential hosts from parser
 		if msg.err != nil {
 			m.lastError = fmt.Errorf("failed to parse ssh config: %w", msg.err)
-			m.currentState = stateSshConfigList // Go back to list on error
+			m.currentState = stateSshConfigList
 		} else {
-			// Filter out hosts that already exist in current config
-			cfg, loadErr := config.LoadConfig() // Load current config
+			cfg, loadErr := config.LoadConfig()
 			if loadErr != nil {
 				m.lastError = fmt.Errorf("failed to load current config for import filtering: %w", loadErr)
 				m.currentState = stateSshConfigList
@@ -1072,92 +1200,102 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				if len(m.importableHosts) == 0 {
-					m.importError = fmt.Errorf("no new importable hosts found in ssh config") // Use importError
-					m.currentState = stateSshConfigList                                       // Go back to list
+					m.importError = fmt.Errorf("no new importable hosts found in ssh config")
+					m.currentState = stateSshConfigList
 				} else {
-					// Transition to selection state
 					m.currentState = stateSshConfigImportSelect
 					m.importCursor = 0
-					m.selectedImportIdxs = make(map[int]struct{}) // Reset selections
-					m.importError = nil                           // Clear specific import error
-					m.lastError = nil                             // Clear general error
+					m.selectedImportIdxs = make(map[int]struct{})
+					m.importError = nil
+					m.lastError = nil
 				}
 			}
 		}
 	case sshHostsImportedMsg:
-		// Result of attempting to save imported hosts
-		m.currentState = stateSshConfigList // Go back to list regardless of outcome
-		m.importError = nil                 // Clear previous error first
-		m.importInfoMsg = ""                // Clear previous info message
+		m.currentState = stateSshConfigList
+		m.importError = nil
+		m.importInfoMsg = ""
 
-		// Check if the error message indicates only non-fatal info (like skipped hosts)
 		isInfoOnly := false
 		if msg.err != nil {
 			errMsgStr := msg.err.Error()
-			// Check if the error message *only* contains the "skipped" part or is empty after trimming spaces
 			isInfoOnly = strings.HasPrefix(strings.TrimSpace(errMsgStr), "(") && strings.HasSuffix(strings.TrimSpace(errMsgStr), ")") || strings.TrimSpace(errMsgStr) == ""
 		}
 
 		if msg.err != nil && !isInfoOnly {
-			// Actual error occurred during save or loading config
 			m.importError = fmt.Errorf("import failed: %w", msg.err)
 		} else {
-			// Success or info only (like skipped hosts)
 			info := fmt.Sprintf("Import finished: %d hosts added.", msg.importedCount)
-			if msg.err != nil && isInfoOnly { // Append the non-fatal info (e.g., skipped count)
-				info += fmt.Sprintf(" %s", msg.err.Error()) // Append the original non-fatal error string
+			if msg.err != nil && isInfoOnly {
+				info += fmt.Sprintf(" %s", msg.err.Error())
 			}
 			m.importInfoMsg = info
 		}
 
-		// Clear import-specific state
 		m.importableHosts = nil
 		m.selectedImportIdxs = nil
 		m.hostsToConfigure = nil
 		m.formInputs = nil
-		// Reload the config list to show changes
 		cmds = append(cmds, loadSshConfigCmd())
 
-	// --- Custom Message Handlers ---
 	case projectDiscoveredMsg:
-		// If we were in the initial loading state, switch to the list view
 		if m.currentState == stateLoadingProjects {
-			m.currentState = stateProjectList // Switch to list view on first project
+			m.currentState = stateProjectList
 		}
-		// Append the newly discovered project
 		m.projects = append(m.projects, msg.project)
 		// TODO: Consider sorting projects (e.g., local first, then by name)
-		// Fetch status for the new project
 		projID := msg.project.Identifier()
 		if !m.loadingStatus[projID] {
 			m.loadingStatus[projID] = true
 			cmds = append(cmds, fetchProjectStatusCmd(msg.project))
 		}
-		// No need to re-queue listener, findProjectsCmd handles the loop
 
 	case discoveryErrorMsg:
-		// Store the error; might display the latest or all in the view/footer
 		m.discoveryErrors = append(m.discoveryErrors, msg.err)
-		// Maybe update lastError to show the latest?
-		m.lastError = msg.err // Update lastError to show the most recent one
-		// No need to re-queue listener
+		m.lastError = msg.err
 
 	case discoveryFinishedMsg:
-		fmt.Fprintf(os.Stderr, "[Debug TUI] Update: Received discoveryFinishedMsg. Current isDiscovering: %t\n", m.isDiscovering)
-		// Handle state transitions first
+		stateChanged := false
 		if m.currentState == stateLoadingProjects {
-			m.currentState = stateProjectList // Go to list view anyway
-			if len(m.discoveryErrors) == 0 {
-				// If no errors occurred either, set a specific message
-				m.lastError = fmt.Errorf("no projects found")
+			m.currentState = stateProjectList
+			stateChanged = true
+			if len(m.projects) == 0 {
+				if len(m.discoveryErrors) == 0 {
+					m.lastError = fmt.Errorf("no projects found")
+				} else {
+					m.lastError = fmt.Errorf("discovery finished with errors, no projects found")
+				}
 			} else {
-				// Use the last discovery error as the primary message
-				m.lastError = fmt.Errorf("discovery finished with errors")
+				m.lastError = nil
+				if len(m.discoveryErrors) > 0 {
+					m.lastError = fmt.Errorf("discovery finished with errors")
+				}
 			}
 		}
-		// Set the flag *after* other state changes in this handler
 		m.isDiscovering = false
-		fmt.Fprintf(os.Stderr, "[Debug TUI] Update: Set isDiscovering=false\n")
+
+		if stateChanged && m.currentState == stateProjectList {
+			listContent := strings.Builder{}
+			listContent.WriteString("Select a project:\n")
+			for i, project := range m.projects {
+				cursor := "  "
+				if m.cursor == i {
+					cursor = cursorStyle.Render("> ")
+				}
+				projID := project.Identifier()
+				statusStr := ""
+				if m.loadingStatus[projID] {
+					statusStr = statusLoadingStyle.Render(" [loading...]")
+				} else if _, ok := m.projectStatuses[projID]; ok {
+					statusStr = statusUpStyle.Render(" [loaded]") // Placeholder status
+				} else {
+					statusStr = statusLoadingStyle.Render(" [?]")
+				}
+				listContent.WriteString(fmt.Sprintf("%s%s (%s)%s\n", cursor, project.Name, serverNameStyle.Render(project.ServerName), statusStr))
+			}
+			m.viewport.SetContent(listContent.String())
+			m.viewport.GotoTop()
+		}
 
 	case sshConfigLoadedMsg:
 		if msg.Err != nil {
@@ -1175,17 +1313,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.projectStatuses[msg.projectIdentifier] = msg.statusInfo
 
 	case stepFinishedMsg:
-		if m.currentState == stateSshConfigRemoveConfirm { // Check if it was a remove operation
+		if m.currentState == stateSshConfigRemoveConfirm {
 			if msg.err != nil {
 				m.lastError = fmt.Errorf("failed to remove host: %w", msg.err)
-				m.currentState = stateSshConfigList     // Go back to list on error
-				cmds = append(cmds, loadSshConfigCmd()) // Reload config list
+				m.currentState = stateSshConfigList
+				cmds = append(cmds, loadSshConfigCmd())
 			} else {
-				// Removal succeeded, reload the list
 				m.currentState = stateSshConfigList
 				cmds = append(cmds, loadSshConfigCmd())
 			}
-		} else if m.currentState == stateRunningSequence { // Sequence step finished
+		} else if m.currentState == stateRunningSequence {
 			m.outputChan = nil
 			m.errorChan = nil
 			if msg.err != nil {
@@ -1201,14 +1338,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.outputContent += successStyle.Render("\n--- Action Sequence Completed Successfully ---") + "\n"
 					m.viewport.SetContent(m.outputContent)
 					m.viewport.GotoBottom()
-					if m.sequenceProject != nil {
-						projID := m.sequenceProject.Identifier()
-						if !m.loadingStatus[projID] {
-							m.loadingStatus[projID] = true
-							cmds = append(cmds, fetchProjectStatusCmd(*m.sequenceProject))
+					for _, proj := range m.projectsInSequence {
+						if proj != nil {
+							projID := proj.Identifier()
+							if !m.loadingStatus[projID] {
+								m.loadingStatus[projID] = true
+								cmds = append(cmds, fetchProjectStatusCmd(*proj))
+							}
 						}
 					}
-					// Stay in sequence view until user presses back
 				} else {
 					cmds = append(cmds, m.startNextStepCmd())
 				}
@@ -1235,44 +1373,38 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case sshHostAddedMsg:
-		if m.currentState == stateSshConfigAddForm { // Ensure this message is for the add form
+		if m.currentState == stateSshConfigAddForm {
 			if msg.err != nil {
-				// Save failed, display error in the form
 				m.formError = msg.err
 			} else {
-				// Save succeeded, go back to list and reload
 				m.currentState = stateSshConfigList
 				m.formError = nil
-				m.formInputs = nil                      // Clear form state
-				m.configCursor = 0                      // Reset cursor potentially
-				cmds = append(cmds, loadSshConfigCmd()) // Reload the list
+				m.formInputs = nil
+				m.configCursor = 0
+				cmds = append(cmds, loadSshConfigCmd())
 			}
 		}
 
 	case sshHostEditedMsg:
-		if m.currentState == stateSshConfigEditForm { // Ensure this message is for the edit form
+		if m.currentState == stateSshConfigEditForm {
 			if msg.err != nil {
-				// Save failed, display error in the form
 				m.formError = msg.err
 			} else {
-				// Save succeeded, go back to list and reload
 				m.currentState = stateSshConfigList
 				m.formError = nil
-				m.formInputs = nil                      // Clear form state
-				m.hostToEdit = nil                      // Clear host being edited
-				m.configCursor = 0                      // Reset cursor potentially
-				cmds = append(cmds, loadSshConfigCmd()) // Reload the list
+				m.formInputs = nil
+				m.hostToEdit = nil
+				m.configCursor = 0
+				cmds = append(cmds, loadSshConfigCmd())
 			}
 		}
 
 	} // End main message switch
 
-	// Handle viewport updates if it was active and received keys
 	if viewportActive {
-		// Already updated above, just collect potential command
+		// Viewport update handled earlier
 	}
 
-	// Update form inputs if a form state is active (Add, Edit, ImportDetails)
 	if m.currentState == stateSshConfigAddForm || m.currentState == stateSshConfigEditForm || m.currentState == stateSshConfigImportDetails {
 		cmds = append(cmds, m.updateInputs(msg))
 	}
@@ -1280,131 +1412,213 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// getAddFormFocusMap returns the sequence of logical focus indices for the Add form.
+func (m *model) getAddFormFocusMap() []int {
+	// Logical indices:
+	// 0-4: Name, Hostname, User, Port, RemoteRoot (Input indices 0-4)
+	// 5: Auth Method
+	// 6: KeyPath (Input index 5) - if authMethodKey
+	// 7: Password (Input index 6) - if authMethodPassword
+	focusMap := []int{0, 1, 2, 3, 4, 5}
+	if m.formAuthMethod == authMethodKey {
+		focusMap = append(focusMap, 6)
+	} else if m.formAuthMethod == authMethodPassword {
+		focusMap = append(focusMap, 7)
+	}
+	return focusMap
+}
+
 // handleSshAddFormKeys handles key presses when the SSH Add form is active.
 func (m *model) handleSshAddFormKeys(msg tea.KeyMsg) []tea.Cmd {
 	var cmds []tea.Cmd
-
-	numInputs := len(m.formInputs)
-	numVisibleInputs := 5 // Name, Hostname, User, Port, RemoteRoot are always visible
-	if m.formAuthMethod == authMethodKey {
-		numVisibleInputs++ // KeyPath is visible
-	} else if m.formAuthMethod == authMethodPassword {
-		numVisibleInputs++ // Password is visible
-	}
-	totalFocusableItems := numVisibleInputs + 1 // +1 for the Auth Method selector
-
-	switch msg.String() {
-	case "tab", "down":
-		m.formFocusIndex = (m.formFocusIndex + 1) % totalFocusableItems
-	case "shift+tab", "up":
-		m.formFocusIndex--
-		if m.formFocusIndex < 0 {
-			m.formFocusIndex = totalFocusableItems - 1
+	focusMap := m.getAddFormFocusMap()
+	currentIndexInMap := -1
+	for i, logicalIndex := range focusMap {
+		if logicalIndex == m.formFocusIndex {
+			currentIndexInMap = i
+			break
 		}
-	case "left", "right":
-		// Only cycle auth method if the auth method selector itself is focused
-		isAuthMethodFocused := m.formFocusIndex == numVisibleInputs
-		if isAuthMethodFocused {
-			if msg.String() == "left" {
+	}
+
+	switch {
+	// Navigation
+	case key.Matches(msg, m.keymap.Tab), key.Matches(msg, m.keymap.Down):
+		if currentIndexInMap != -1 {
+			nextIndexInMap := (currentIndexInMap + 1) % len(focusMap)
+			m.formFocusIndex = focusMap[nextIndexInMap]
+		}
+	case key.Matches(msg, m.keymap.ShiftTab), key.Matches(msg, m.keymap.Up):
+		if currentIndexInMap != -1 {
+			nextIndexInMap := (currentIndexInMap - 1 + len(focusMap)) % len(focusMap)
+			m.formFocusIndex = focusMap[nextIndexInMap]
+		}
+	case key.Matches(msg, m.keymap.Left), key.Matches(msg, m.keymap.Right):
+		if m.formFocusIndex == 5 {
+			if key.Matches(msg, m.keymap.Left) {
 				m.formAuthMethod--
 				if m.formAuthMethod < authMethodKey {
 					m.formAuthMethod = authMethodPassword
 				}
-			} else { // right
+			} else { // Right
 				m.formAuthMethod++
 				if m.formAuthMethod > authMethodPassword {
 					m.formAuthMethod = authMethodKey
 				}
 			}
-			m.formError = nil // Clear potential errors related to old auth method
+			// Ensure focus stays valid after auth method change
+			newFocusMap := m.getAddFormFocusMap()
+			found := false
+			for _, logicalIndex := range newFocusMap {
+				if logicalIndex == m.formFocusIndex {
+					found = true
+					break
+				}
+			}
+			if !found { // If current focus index is no longer valid (e.g., was KeyPath), move to Auth Method
+				m.formFocusIndex = 5
+			}
+			m.formError = nil
 		}
-		// If not focused on auth method, let the input field handle left/right normally (via updateInputs)
 
-	case "enter":
-		// Validate and attempt to save
-		m.formError = nil // Clear previous error
+	case key.Matches(msg, m.keymap.Enter):
+		if m.formFocusIndex == 5 {
+			return cmds
+		}
+		m.formError = nil
 		newHost, validationErr := m.buildHostFromForm()
 		if validationErr != nil {
 			m.formError = validationErr
 		} else {
-			// Validation passed, dispatch save command
 			cmds = append(cmds, saveNewSshHostCmd(newHost))
 		}
 	}
 
-	// Update focus state for inputs
-	for i := 0; i < numInputs; i++ {
-		isFocusableIndex := i < numVisibleInputs // Check if the input *index* corresponds to a visible field
+	// --- Update Focus State ---
+	for i := range m.formInputs {
+		m.formInputs[i].Blur()
+		m.formInputs[i].Prompt = "  "
+		m.formInputs[i].TextStyle = lipgloss.NewStyle()
+	}
 
-		if isFocusableIndex && i == m.formFocusIndex {
-			// Set focus
-			cmds = append(cmds, m.formInputs[i].Focus())
-			m.formInputs[i].Prompt = cursorStyle.Render("> ")
-			m.formInputs[i].TextStyle = cursorStyle
-		} else {
-			// Remove focus
-			m.formInputs[i].Blur()
-			m.formInputs[i].Prompt = "  "
-			m.formInputs[i].TextStyle = lipgloss.NewStyle()
+	var focusedInputIndex int = -1
+	switch m.formFocusIndex {
+	case 0, 1, 2, 3, 4:
+		focusedInputIndex = m.formFocusIndex
+	case 6:
+		if m.formAuthMethod == authMethodKey {
+			focusedInputIndex = 5
 		}
+	case 7:
+		if m.formAuthMethod == authMethodPassword {
+			focusedInputIndex = 6
+		}
+	}
+
+	if focusedInputIndex != -1 {
+		cmds = append(cmds, m.formInputs[focusedInputIndex].Focus())
+		m.formInputs[focusedInputIndex].Prompt = cursorStyle.Render("> ")
+		m.formInputs[focusedInputIndex].TextStyle = cursorStyle
 	}
 
 	return cmds
 }
 
+// --- Edit Form Navigation Helpers ---
+
+// getEditFormFocusMap returns the sequence of logical focus indices for the Edit form.
+func (m *model) getEditFormFocusMap() []int {
+	// Logical indices:
+	// 0-4: Name, Hostname, User, Port, RemoteRoot (Input indices 0-4)
+	// 5: Auth Method
+	// 6: KeyPath (Input index 5) - if authMethodKey
+	// 7: Password (Input index 6) - if authMethodPassword
+	// 8: Disabled Toggle
+	focusMap := []int{0, 1, 2, 3, 4, 5}
+	if m.formAuthMethod == authMethodKey {
+		focusMap = append(focusMap, 6)
+	} else if m.formAuthMethod == authMethodPassword {
+		focusMap = append(focusMap, 7)
+	}
+	focusMap = append(focusMap, 8)
+	return focusMap
+}
+
+// getAuthMethodFocusIndex returns the logical focus index for the Auth Method selector in the Edit form.
+func (m *model) getAuthMethodFocusIndex() int {
+	return 5
+}
+
+// getDisabledToggleFocusIndex returns the logical focus index for the Disabled toggle in the Edit form.
+func (m *model) getDisabledToggleFocusIndex() int {
+	return 8
+}
+
 // handleSshEditFormKeys handles key presses when the SSH Edit form is active.
 func (m *model) handleSshEditFormKeys(msg tea.KeyMsg) []tea.Cmd {
 	var cmds []tea.Cmd
+	focusMap := m.getEditFormFocusMap()
+	authMethodLogicalIndex := m.getAuthMethodFocusIndex()
+	disabledToggleLogicalIndex := m.getDisabledToggleFocusIndex()
 
-	numInputs := len(m.formInputs)
-	// Determine number of focusable items: Visible Inputs + Auth Method Selector + Disabled Toggle
-	numVisibleInputs := 5 // Base: Name, Hostname, User, Port, RemoteRoot
-	if m.formAuthMethod == authMethodKey {
-		numVisibleInputs++
-	} // KeyPath
-	if m.formAuthMethod == authMethodPassword {
-		numVisibleInputs++
-	} // Password
-	authMethodFocusIndex := numVisibleInputs
-	disabledFocusIndex := numVisibleInputs + 1
-	totalFocusableItems := numVisibleInputs + 2 // Inputs + Auth Method + Disabled Toggle
-
-	switch msg.String() {
-	case "tab", "down":
-		m.formFocusIndex = (m.formFocusIndex + 1) % totalFocusableItems
-	case "shift+tab", "up":
-		m.formFocusIndex--
-		if m.formFocusIndex < 0 {
-			m.formFocusIndex = totalFocusableItems - 1
+	currentIndexInMap := -1
+	for i, logicalIndex := range focusMap {
+		if logicalIndex == m.formFocusIndex {
+			currentIndexInMap = i
+			break
 		}
-	case " ": // Spacebar - Toggle Disabled status if focused
-		if m.formFocusIndex == disabledFocusIndex {
+	}
+
+	switch {
+	// Navigation
+	case key.Matches(msg, m.keymap.Tab), key.Matches(msg, m.keymap.Down):
+		if currentIndexInMap != -1 {
+			nextIndexInMap := (currentIndexInMap + 1) % len(focusMap)
+			m.formFocusIndex = focusMap[nextIndexInMap]
+		}
+	case key.Matches(msg, m.keymap.ShiftTab), key.Matches(msg, m.keymap.Up):
+		if currentIndexInMap != -1 {
+			nextIndexInMap := (currentIndexInMap - 1 + len(focusMap)) % len(focusMap)
+			m.formFocusIndex = focusMap[nextIndexInMap]
+		}
+	case key.Matches(msg, m.keymap.ToggleDisabled):
+		if m.formFocusIndex == disabledToggleLogicalIndex {
 			m.formDisabled = !m.formDisabled
 		}
-		// Otherwise, let input handle space if focused
 
-	case "left", "right":
-		// Only cycle auth method if the auth method selector itself is focused
-		if m.formFocusIndex == authMethodFocusIndex {
-			if msg.String() == "left" {
+	case key.Matches(msg, m.keymap.Left), key.Matches(msg, m.keymap.Right):
+		if m.formFocusIndex == authMethodLogicalIndex {
+			if key.Matches(msg, m.keymap.Left) {
 				m.formAuthMethod--
 				if m.formAuthMethod < authMethodKey {
 					m.formAuthMethod = authMethodPassword
 				}
-			} else { // right
+			} else { // Right
 				m.formAuthMethod++
 				if m.formAuthMethod > authMethodPassword {
 					m.formAuthMethod = authMethodKey
 				}
 			}
-			m.formError = nil // Clear potential errors related to old auth method
+			// Ensure focus stays valid after auth method change
+			newFocusMap := m.getEditFormFocusMap()
+			found := false
+			for _, logicalIndex := range newFocusMap {
+				if logicalIndex == m.formFocusIndex {
+					found = true
+					break
+				}
+			}
+			if !found { // If current focus index is no longer valid, move to Auth Method
+				m.formFocusIndex = authMethodLogicalIndex
+			}
+			m.formError = nil
 		}
-		// If not focused on auth method or disabled toggle, let the input field handle left/right normally (via updateInputs)
 
-	case "enter":
-		// Validate and attempt to save
-		m.formError = nil        // Clear previous error
-		if m.hostToEdit == nil { // Should not happen, but safety check
+	case key.Matches(msg, m.keymap.Enter):
+		if m.formFocusIndex == authMethodLogicalIndex || m.formFocusIndex == disabledToggleLogicalIndex {
+			return cmds
+		}
+		m.formError = nil
+		if m.hostToEdit == nil {
 			m.formError = fmt.Errorf("internal error: no host selected for editing")
 			return cmds
 		}
@@ -1412,35 +1626,35 @@ func (m *model) handleSshEditFormKeys(msg tea.KeyMsg) []tea.Cmd {
 		if validationErr != nil {
 			m.formError = validationErr
 		} else {
-			// Validation passed, dispatch save command
 			cmds = append(cmds, saveEditedSshHostCmd(m.hostToEdit.Name, editedHost))
 		}
 	}
 
-	// Update focus state for inputs
-	for i := 0; i < numInputs; i++ {
-		isVisibleIndex := false
-		if i < 5 {
-			isVisibleIndex = true
-		} // First 5 always visible conceptually
-		if i == 5 && m.formAuthMethod == authMethodKey {
-			isVisibleIndex = true
-		} // KeyPath
-		if i == 6 && m.formAuthMethod == authMethodPassword {
-			isVisibleIndex = true
-		} // Password
+	// --- Update Focus State ---
+	for i := range m.formInputs {
+		m.formInputs[i].Blur()
+		m.formInputs[i].Prompt = "  "
+		m.formInputs[i].TextStyle = lipgloss.NewStyle()
+	}
 
-		if isVisibleIndex && i == m.formFocusIndex {
-			// Set focus
-			cmds = append(cmds, m.formInputs[i].Focus())
-			m.formInputs[i].Prompt = cursorStyle.Render("> ")
-			m.formInputs[i].TextStyle = cursorStyle
-		} else {
-			// Remove focus
-			m.formInputs[i].Blur()
-			m.formInputs[i].Prompt = "  "
-			m.formInputs[i].TextStyle = lipgloss.NewStyle()
+	var focusedInputIndex int = -1
+	switch m.formFocusIndex {
+	case 0, 1, 2, 3, 4:
+		focusedInputIndex = m.formFocusIndex
+	case 6:
+		if m.formAuthMethod == authMethodKey {
+			focusedInputIndex = 5
 		}
+	case 7:
+		if m.formAuthMethod == authMethodPassword {
+			focusedInputIndex = 6
+		}
+	}
+
+	if focusedInputIndex != -1 {
+		cmds = append(cmds, m.formInputs[focusedInputIndex].Focus())
+		m.formInputs[focusedInputIndex].Prompt = cursorStyle.Render("> ")
+		m.formInputs[focusedInputIndex].TextStyle = cursorStyle
 	}
 
 	return cmds
@@ -1452,63 +1666,68 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 
 	// Determine number of focusable items: RemoteRoot + (KeyPath or Password if needed) + AuthMethod
 	numFocusable := 1 // Remote Root
-	authNeeded := m.importableHosts[m.configuringHostIdx].KeyPath == ""
+	authNeeded := false
+	// Check if configuringHostIdx is valid before accessing importableHosts
+	if m.configuringHostIdx >= 0 && m.configuringHostIdx < len(m.importableHosts) {
+		authNeeded = m.importableHosts[m.configuringHostIdx].KeyPath == ""
+	}
 	if authNeeded {
 		numFocusable++ // KeyPath or Password field
 		numFocusable++ // Auth Method selector
 	}
 
-	switch msg.String() {
-	case "tab", "down":
+	switch {
+	// Navigation
+	case key.Matches(msg, m.keymap.Tab), key.Matches(msg, m.keymap.Down):
 		m.formFocusIndex = (m.formFocusIndex + 1) % numFocusable
-	case "shift+tab", "up":
+	case key.Matches(msg, m.keymap.ShiftTab), key.Matches(msg, m.keymap.Up):
 		m.formFocusIndex--
 		if m.formFocusIndex < 0 {
 			m.formFocusIndex = numFocusable - 1
 		}
-	case "left", "right": // Cycle auth method (only if auth is needed and focused)
+	// Auth Method Cycling
+	case key.Matches(msg, m.keymap.Left), key.Matches(msg, m.keymap.Right):
 		isAuthMethodFocused := authNeeded && m.formFocusIndex == 2 // Index 2 is auth method selector here
 		if isAuthMethodFocused {
-			if msg.String() == "left" {
+			if key.Matches(msg, m.keymap.Left) {
 				m.formAuthMethod--
 				if m.formAuthMethod < authMethodKey {
 					m.formAuthMethod = authMethodPassword
 				}
-			} else { // right
+			} else { // Right
 				m.formAuthMethod++
 				if m.formAuthMethod > authMethodPassword {
 					m.formAuthMethod = authMethodKey
 				}
 			}
-			m.formError = nil // Clear potential errors related to old auth method
+			m.formError = nil
 		}
-		// If not focused on auth method, let the input field handle left/right normally (via updateInputs)
 
-	case "enter":
-		// Validate current host details and move to next or save
-		m.formError = nil // Clear previous error
+	case key.Matches(msg, m.keymap.Enter):
+		m.formError = nil
+
+		if m.configuringHostIdx < 0 || m.configuringHostIdx >= len(m.importableHosts) {
+			m.formError = fmt.Errorf("internal error: invalid host index for import details")
+			return cmds
+		}
 		currentPotentialHost := m.importableHosts[m.configuringHostIdx]
 
-		// Extract details from form
 		remoteRoot := strings.TrimSpace(m.formInputs[4].Value())
 		keyPath := strings.TrimSpace(m.formInputs[5].Value())
-		password := m.formInputs[6].Value() // Don't trim
+		password := m.formInputs[6].Value()
 
-		// Basic validation
 		if remoteRoot == "" {
 			m.formError = fmt.Errorf("remote root path is required")
-			return cmds // Stay on current form
+			return cmds
 		}
 
-		// Build the host config
 		hostToSave, convertErr := sshconfig.ConvertToBucketManagerHost(currentPotentialHost, currentPotentialHost.Alias, remoteRoot)
-		if convertErr != nil { // Should not happen if PotentialHost was valid, but check anyway
+		if convertErr != nil {
 			m.formError = fmt.Errorf("internal conversion error: %w", convertErr)
 			return cmds
 		}
 
-		// Apply auth details if needed
-		if currentPotentialHost.KeyPath == "" { // Only override auth if not specified in ssh_config
+		if currentPotentialHost.KeyPath == "" {
 			switch m.formAuthMethod {
 			case authMethodKey:
 				if keyPath == "" {
@@ -1530,10 +1749,8 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 			}
 		}
 
-		// Add successfully configured host to the list
 		m.hostsToConfigure = append(m.hostsToConfigure, hostToSave)
 
-		// Find the next selected host index
 		nextSelectedIdx := -1
 		for i := m.configuringHostIdx + 1; i < len(m.importableHosts); i++ {
 			if _, ok := m.selectedImportIdxs[i]; ok {
@@ -1543,26 +1760,21 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 		}
 
 		if nextSelectedIdx != -1 {
-			// Move to the next host
 			m.configuringHostIdx = nextSelectedIdx
 			pHostToConfigure := m.importableHosts[m.configuringHostIdx]
 			m.formInputs, m.formAuthMethod = createImportDetailsForm(pHostToConfigure)
-			m.formFocusIndex = 0 // Reset focus
+			m.formFocusIndex = 0
 			m.formError = nil
 		} else {
-			// No more hosts selected, trigger save command
 			cmds = append(cmds, saveImportedSshHostsCmd(m.hostsToConfigure))
-			// State transition and cleanup will be handled by sshHostsImportedMsg handler
 		}
 	}
 
 	// --- Update Focus State ---
-	// Map relative focus index (0, 1, 2) to actual input indices (4, 5/6) and auth selector
 	remoteRootIdx := 4
 	keyPathIdx := 5
 	passwordIdx := 6
 
-	// Blur all potentially focusable inputs first
 	m.formInputs[remoteRootIdx].Blur()
 	m.formInputs[keyPathIdx].Blur()
 	m.formInputs[passwordIdx].Blur()
@@ -1573,13 +1785,12 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 	m.formInputs[keyPathIdx].TextStyle = lipgloss.NewStyle()
 	m.formInputs[passwordIdx].TextStyle = lipgloss.NewStyle()
 
-	// Set focus based on relative index and auth method
-	if m.formFocusIndex == 0 { // Focus Remote Root (index 4)
+	if m.formFocusIndex == 0 {
 		cmds = append(cmds, m.formInputs[remoteRootIdx].Focus())
 		m.formInputs[remoteRootIdx].Prompt = cursorStyle.Render("> ")
 		m.formInputs[remoteRootIdx].TextStyle = cursorStyle
 	} else if authNeeded {
-		if m.formFocusIndex == 1 { // Focus KeyPath or Password
+		if m.formFocusIndex == 1 {
 			if m.formAuthMethod == authMethodKey {
 				cmds = append(cmds, m.formInputs[keyPathIdx].Focus())
 				m.formInputs[keyPathIdx].Prompt = cursorStyle.Render("> ")
@@ -1590,7 +1801,6 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 				m.formInputs[passwordIdx].TextStyle = cursorStyle
 			}
 		}
-		// Focus state for the Auth Method selector (index 2) is handled in the View function
 	}
 
 	return cmds
@@ -1601,7 +1811,6 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 func (m *model) buildHostFromForm() (config.SSHHost, error) {
 	host := config.SSHHost{}
 
-	// Basic required field checks
 	host.Name = strings.TrimSpace(m.formInputs[0].Value())
 	if host.Name == "" {
 		return host, fmt.Errorf("name is required")
@@ -1619,17 +1828,16 @@ func (m *model) buildHostFromForm() (config.SSHHost, error) {
 		return host, fmt.Errorf("remote root path is required")
 	}
 
-	// Port (optional, defaults to 22 if empty, validate if not empty)
 	portStr := strings.TrimSpace(m.formInputs[3].Value())
 	if portStr == "" {
-		host.Port = 0 // Store 0 for default 22
+		host.Port = 0
 	} else {
 		port, err := strconv.Atoi(portStr)
 		if err != nil || port < 1 || port > 65535 {
 			return host, fmt.Errorf("invalid port number: %s", portStr)
 		}
 		if port == 22 {
-			host.Port = 0 // Store 0 for default 22
+			host.Port = 0
 		} else {
 			host.Port = port
 		}
@@ -1643,7 +1851,7 @@ func (m *model) buildHostFromForm() (config.SSHHost, error) {
 			return host, fmt.Errorf("key path is required for Key File authentication")
 		}
 	case authMethodPassword:
-		host.Password = m.formInputs[6].Value() // Don't trim password
+		host.Password = m.formInputs[6].Value()
 		if host.Password == "" {
 			return host, fmt.Errorf("password is required for Password authentication")
 		}
@@ -1662,7 +1870,7 @@ func (m *model) buildHostFromForm() (config.SSHHost, error) {
 		}
 	}
 
-	return host, nil // Validation passed
+	return host, nil
 }
 
 // buildHostFromEditForm creates a config.SSHHost struct from the current edit form state.
@@ -1672,9 +1880,8 @@ func (m *model) buildHostFromEditForm() (config.SSHHost, error) {
 		return config.SSHHost{}, fmt.Errorf("internal error: hostToEdit is nil")
 	}
 	originalHost := *m.hostToEdit
-	editedHost := config.SSHHost{} // Start fresh
+	editedHost := config.SSHHost{}
 
-	// Get values, falling back to original if blank (after trim)
 	editedHost.Name = strings.TrimSpace(m.formInputs[0].Value())
 	if editedHost.Name == "" {
 		editedHost.Name = originalHost.Name
@@ -1695,7 +1902,6 @@ func (m *model) buildHostFromEditForm() (config.SSHHost, error) {
 		editedHost.RemoteRoot = originalHost.RemoteRoot
 	}
 
-	// Basic required field checks (ensure they didn't become empty)
 	if editedHost.Name == "" {
 		return editedHost, fmt.Errorf("name cannot be empty")
 	}
@@ -1709,17 +1915,16 @@ func (m *model) buildHostFromEditForm() (config.SSHHost, error) {
 		return editedHost, fmt.Errorf("remote root path cannot be empty")
 	}
 
-	// Port (optional, defaults to 22 if empty, validate if not empty)
 	portStr := strings.TrimSpace(m.formInputs[3].Value())
 	if portStr == "" {
-		editedHost.Port = 0 // Store 0 for default 22
+		editedHost.Port = 0
 	} else {
 		port, err := strconv.Atoi(portStr)
 		if err != nil || port < 1 || port > 65535 {
 			return editedHost, fmt.Errorf("invalid port number: %s", portStr)
 		}
 		if port == 22 {
-			editedHost.Port = 0 // Store 0 for default 22
+			editedHost.Port = 0
 		} else {
 			editedHost.Port = port
 		}
@@ -1727,7 +1932,7 @@ func (m *model) buildHostFromEditForm() (config.SSHHost, error) {
 
 	// Auth method specific validation
 	keyPathInput := strings.TrimSpace(m.formInputs[5].Value())
-	passwordInput := m.formInputs[6].Value() // Don't trim password input
+	passwordInput := m.formInputs[6].Value()
 
 	switch m.formAuthMethod {
 	case authMethodKey:
@@ -1737,116 +1942,84 @@ func (m *model) buildHostFromEditForm() (config.SSHHost, error) {
 		} else {
 			editedHost.KeyPath = keyPathInput
 		}
-		// Final check: Key path cannot be empty if this method is selected
 		if editedHost.KeyPath == "" {
 			return editedHost, fmt.Errorf("key path is required for Key File authentication")
 		}
-		editedHost.Password = "" // Ensure password is clear
+		editedHost.Password = ""
 	case authMethodPassword:
 		if passwordInput == "" {
-			// If blank, keep original password *only if* auth method didn't change from password
 			if originalHost.Password != "" && originalHost.KeyPath == "" {
 				editedHost.Password = originalHost.Password
 			} else {
-				// Auth method changed to password, or original wasn't password, and input is blank
 				return editedHost, fmt.Errorf("password is required for Password authentication")
 			}
 		} else {
 			editedHost.Password = passwordInput
 		}
-		// Final check: Password cannot be empty if this method is selected
 		if editedHost.Password == "" {
 			return editedHost, fmt.Errorf("password is required for Password authentication")
 		}
-		editedHost.KeyPath = "" // Ensure key path is clear
+		editedHost.KeyPath = ""
 	case authMethodAgent:
-		// No specific fields required for agent
 		editedHost.KeyPath = ""
 		editedHost.Password = ""
 	default:
 		return editedHost, fmt.Errorf("invalid authentication method selected")
 	}
 
-	// Check for name conflict only if the name was actually changed
 	if editedHost.Name != originalHost.Name {
 		for _, existingHost := range m.configuredHosts {
-			// Ensure we are not comparing the host against its original entry if name didn't change
-			// (The check should be against *other* hosts)
 			if existingHost.Name != originalHost.Name && existingHost.Name == editedHost.Name {
 				return editedHost, fmt.Errorf("host name '%s' already exists", editedHost.Name)
 			}
 		}
 	}
 
-	// Set the disabled status from the form toggle state
 	editedHost.Disabled = m.formDisabled
 
-	return editedHost, nil // Validation passed
+	return editedHost, nil
 }
 
 func (m *model) handleProjectListKeys(msg tea.KeyMsg) []tea.Cmd {
 	var cmds []tea.Cmd
-	var vpCmd tea.Cmd // Command from viewport update
+	var vpCmd tea.Cmd
+	cursorMoved := false
 
-	// Handle navigation first (cursor and viewport)
 	switch {
-	case key.Matches(msg, key.NewBinding(key.WithKeys("up", "k"))):
+	case key.Matches(msg, m.keymap.Up):
 		if m.cursor > 0 {
 			m.cursor--
+			cursorMoved = true
 		}
-		// Send key to viewport regardless of cursor change for scrolling
 		m.viewport, vpCmd = m.viewport.Update(msg)
 		cmds = append(cmds, vpCmd)
-	case key.Matches(msg, key.NewBinding(key.WithKeys("down", "j"))):
+	case key.Matches(msg, m.keymap.Down):
 		if m.cursor < len(m.projects)-1 {
 			m.cursor++
+			cursorMoved = true
 		}
-		// Send key to viewport regardless of cursor change for scrolling
 		m.viewport, vpCmd = m.viewport.Update(msg)
 		cmds = append(cmds, vpCmd)
-	// Add PageUp/PageDown/Home/End for viewport scrolling
-	case key.Matches(msg, key.NewBinding(key.WithKeys("pgup", "pgdown", "home", "end"))):
+	case key.Matches(msg, m.keymap.PgUp), key.Matches(msg, m.keymap.PgDown), key.Matches(msg, m.keymap.Home), key.Matches(msg, m.keymap.End):
 		m.viewport, vpCmd = m.viewport.Update(msg)
 		cmds = append(cmds, vpCmd)
-	// Handle actions only if not a navigation key handled above
 	default:
 		switch {
-		case key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))):
-			return []tea.Cmd{tea.Quit}
-		case key.Matches(msg, key.NewBinding(key.WithKeys("u"))):
+		case key.Matches(msg, m.keymap.Select):
 			if len(m.projects) > 0 && m.cursor < len(m.projects) {
-				m.sequenceProject = &m.projects[m.cursor]
-				m.currentSequence = runner.UpSequence(*m.sequenceProject)
-				m.currentState = stateRunningSequence
-				m.currentStepIndex = 0
-				m.outputContent = ""
-				m.lastError = nil
-				m.viewport.GotoTop()
-				cmds = append(cmds, m.startNextStepCmd())
+				if _, ok := m.selectedProjectIdxs[m.cursor]; ok {
+					delete(m.selectedProjectIdxs, m.cursor)
+				} else {
+					m.selectedProjectIdxs[m.cursor] = struct{}{}
+				}
 			}
-		case key.Matches(msg, key.NewBinding(key.WithKeys("d"))):
-			if len(m.projects) > 0 && m.cursor < len(m.projects) {
-				m.sequenceProject = &m.projects[m.cursor]
-				m.currentSequence = runner.DownSequence(*m.sequenceProject)
-				m.currentState = stateRunningSequence
-				m.currentStepIndex = 0
-				m.outputContent = ""
-				m.lastError = nil
-				m.viewport.GotoTop()
-				cmds = append(cmds, m.startNextStepCmd())
-			}
-		case key.Matches(msg, key.NewBinding(key.WithKeys("r"))):
-			if len(m.projects) > 0 && m.cursor < len(m.projects) {
-				m.sequenceProject = &m.projects[m.cursor]
-				m.currentSequence = runner.RefreshSequence(*m.sequenceProject)
-				m.currentState = stateRunningSequence
-				m.currentStepIndex = 0
-				m.outputContent = ""
-				m.lastError = nil
-				m.viewport.GotoTop()
-				cmds = append(cmds, m.startNextStepCmd())
-			}
-		case key.Matches(msg, key.NewBinding(key.WithKeys("enter"))):
+		case key.Matches(msg, m.keymap.UpAction):
+			cmds = append(cmds, m.runSequenceOnSelection(runner.UpSequence)...)
+		case key.Matches(msg, m.keymap.DownAction):
+			cmds = append(cmds, m.runSequenceOnSelection(runner.DownSequence)...)
+		case key.Matches(msg, m.keymap.RefreshAction):
+			cmds = append(cmds, m.runSequenceOnSelection(runner.RefreshSequence)...)
+		case key.Matches(msg, m.keymap.Enter):
 			if len(m.projects) > 0 && m.cursor < len(m.projects) {
 				m.detailedProject = &m.projects[m.cursor]
 				m.currentState = stateProjectDetails
@@ -1856,11 +2029,12 @@ func (m *model) handleProjectListKeys(msg tea.KeyMsg) []tea.Cmd {
 					cmds = append(cmds, fetchProjectStatusCmd(*m.detailedProject))
 				}
 			}
+			// Config key is handled in the main Update switch
 		}
 	}
 
-	// Fetch status if cursor moved to an unloaded project (after potential cursor update)
-	if (key.Matches(msg, key.NewBinding(key.WithKeys("up", "k"))) || key.Matches(msg, key.NewBinding(key.WithKeys("down", "j")))) && len(m.projects) > 0 {
+	// Fetch status if cursor moved to an unloaded project
+	if cursorMoved && len(m.projects) > 0 {
 		selectedProject := m.projects[m.cursor]
 		projID := selectedProject.Identifier()
 		if _, loaded := m.projectStatuses[projID]; !loaded && !m.loadingStatus[projID] {
@@ -1872,12 +2046,59 @@ func (m *model) handleProjectListKeys(msg tea.KeyMsg) []tea.Cmd {
 	return cmds
 }
 
+// runSequenceOnSelection prepares and starts a sequence for selected projects or the current project.
+func (m *model) runSequenceOnSelection(sequenceFunc func(discovery.Project) []runner.CommandStep) []tea.Cmd {
+	var cmds []tea.Cmd
+	var projectsToRun []*discovery.Project
+	var combinedSequence []runner.CommandStep
+	m.projectsInSequence = nil
+
+	if len(m.selectedProjectIdxs) > 0 {
+		for idx := range m.selectedProjectIdxs {
+			if idx >= 0 && idx < len(m.projects) {
+				projectsToRun = append(projectsToRun, &m.projects[idx])
+			}
+		}
+		m.selectedProjectIdxs = make(map[int]struct{})
+	} else if len(m.projects) > 0 && m.cursor < len(m.projects) {
+		projectsToRun = append(projectsToRun, &m.projects[m.cursor])
+	}
+
+	if len(projectsToRun) == 0 {
+		return cmds
+	}
+
+	m.projectsInSequence = projectsToRun
+	for _, projPtr := range projectsToRun {
+		if projPtr != nil {
+			combinedSequence = append(combinedSequence, sequenceFunc(*projPtr)...)
+		}
+	}
+
+	if len(combinedSequence) > 0 {
+		if len(projectsToRun) > 0 && projectsToRun[0] != nil {
+			m.sequenceProject = projectsToRun[0]
+		} else {
+			m.sequenceProject = nil
+		}
+		m.currentSequence = combinedSequence
+		m.currentState = stateRunningSequence
+		m.currentStepIndex = 0
+		m.outputContent = ""
+		m.lastError = nil
+		m.viewport.GotoTop()
+		cmds = append(cmds, m.startNextStepCmd())
+	}
+
+	return cmds
+}
+
 func (m *model) startNextStepCmd() tea.Cmd {
 	if m.currentSequence == nil || m.currentStepIndex >= len(m.currentSequence) {
 		return nil
 	}
 	step := m.currentSequence[m.currentStepIndex]
-	m.outputContent += stepStyle.Render(fmt.Sprintf("\n--- Starting Step: %s for %s ---", step.Name, m.sequenceProject.Identifier())) + "\n"
+	m.outputContent += stepStyle.Render(fmt.Sprintf("\n--- Starting Step: %s for %s ---", step.Name, step.Project.Identifier())) + "\n"
 	m.viewport.SetContent(m.outputContent)
 	m.viewport.GotoBottom()
 	return runStepCmd(step)
@@ -1887,23 +2108,35 @@ func (m *model) View() string {
 	if !m.ready {
 		return "Initializing..."
 	}
-
 	var header, body, footer string
 	header = titleStyle.Render("Bucket Manager TUI") + "\n"
 	bodyContent := strings.Builder{}
+
+	headerHeight := 2
+	footerHeight := 2
+	newViewportHeight := m.height - headerHeight - footerHeight
+	if newViewportHeight < 1 {
+		newViewportHeight = 1
+	}
+	m.viewport.Height = newViewportHeight
 
 	switch m.currentState {
 	case stateLoadingProjects:
 		bodyContent.WriteString(statusStyle.Render("Loading projects..."))
 	case stateProjectList:
-		// Build the project list content string
 		listContent := strings.Builder{}
-		listContent.WriteString("Select a project:\n") // Header for the list itself
+		listContent.WriteString("Select a project:\n")
 		for i, project := range m.projects {
 			cursor := "  "
 			if m.cursor == i {
 				cursor = cursorStyle.Render("> ")
 			}
+
+			checkbox := "[ ]"
+			if _, selected := m.selectedProjectIdxs[i]; selected {
+				checkbox = successStyle.Render("[x]")
+			}
+
 			projID := project.Identifier()
 			statusStr := ""
 			if m.loadingStatus[projID] {
@@ -1924,16 +2157,12 @@ func (m *model) View() string {
 			} else {
 				statusStr = statusLoadingStyle.Render(" [?]")
 			}
-			listContent.WriteString(fmt.Sprintf("%s%s (%s)%s\n", cursor, project.Name, serverNameStyle.Render(project.ServerName), statusStr))
+			listContent.WriteString(fmt.Sprintf("%s%s %s (%s)%s\n", cursor, checkbox, project.Name, serverNameStyle.Render(project.ServerName), statusStr))
 		}
-		// Set the built string as viewport content
 		m.viewport.SetContent(listContent.String())
-		// Use the viewport's view for the body
 		body = m.viewport.View()
-		// Indicator logic moved to footer rendering below
 	case stateRunningSequence, stateSequenceError:
-		// Ensure viewport content is updated (already done in Update for these states)
-		body = m.viewport.View() // Use viewport directly
+		body = m.viewport.View()
 	case stateProjectDetails:
 		if m.detailedProject == nil {
 			bodyContent.WriteString(errorStyle.Render("Error: No project selected for details."))
@@ -1998,7 +2227,7 @@ func (m *model) View() string {
 				status := ""
 				if host.Disabled {
 					status = errorStyle.Render(" [Disabled]")
-				} // Use Render
+				}
 				bodyContent.WriteString(fmt.Sprintf("%s%s (%s)%s\n", cursor, host.Name, serverNameStyle.Render(details), status))
 			}
 		}
@@ -2007,7 +2236,7 @@ func (m *model) View() string {
 		}
 	case stateSshConfigRemoveConfirm:
 		if m.hostToRemove != nil {
-			bodyContent.WriteString(fmt.Sprintf("Are you sure you want to remove the SSH host '%s'?\n\n", identifierColor.Render(m.hostToRemove.Name))) // Use Render
+			bodyContent.WriteString(fmt.Sprintf("Are you sure you want to remove the SSH host '%s'?\n\n", identifierColor.Render(m.hostToRemove.Name)))
 			bodyContent.WriteString("[y] Yes, remove | [n/Esc/b] No, cancel")
 		} else {
 			bodyContent.WriteString(errorStyle.Render("Error: No host selected for removal. Press Esc/b to go back."))
@@ -2015,19 +2244,11 @@ func (m *model) View() string {
 	case stateSshConfigAddForm:
 		bodyContent.WriteString(titleStyle.Render("Add New SSH Host") + "\n\n")
 
-		// Render inputs
-		for i := 0; i < 5; i++ { // Always render first 5 inputs
+		for i := 0; i < 5; i++ {
 			bodyContent.WriteString(m.formInputs[i].View() + "\n")
 		}
 
-		// Conditionally render Key Path or Password input
-		if m.formAuthMethod == authMethodKey {
-			bodyContent.WriteString(m.formInputs[5].View() + "\n") // Key Path
-		} else if m.formAuthMethod == authMethodPassword {
-			bodyContent.WriteString(m.formInputs[6].View() + "\n") // Password
-		}
-
-		// Render Auth Method Selection
+		// Render Auth Method Selection FIRST
 		authFocus := "  "
 		authStyle := lipgloss.NewStyle()
 		numVisibleInputs := 5
@@ -2036,7 +2257,8 @@ func (m *model) View() string {
 		} else if m.formAuthMethod == authMethodPassword {
 			numVisibleInputs++
 		}
-		if m.formFocusIndex == numVisibleInputs { // Check if auth method selector is focused
+		// Check if auth method selector (logical index 5) is focused
+		if m.formFocusIndex == 5 {
 			authFocus = cursorStyle.Render("> ")
 			authStyle = cursorStyle
 		}
@@ -2053,7 +2275,12 @@ func (m *model) View() string {
 		helpText := "[←/→ to change]"
 		bodyContent.WriteString(fmt.Sprintf("%s%s\n", authFocus, authStyle.Render("Auth Method: "+authMethodStr+" "+helpText)))
 
-		// Render Error
+		if m.formAuthMethod == authMethodKey {
+			bodyContent.WriteString(m.formInputs[5].View() + "\n")
+		} else if m.formAuthMethod == authMethodPassword {
+			bodyContent.WriteString(m.formInputs[6].View() + "\n")
+		}
+
 		if m.formError != nil {
 			bodyContent.WriteString("\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.formError)))
 		}
@@ -2071,7 +2298,7 @@ func (m *model) View() string {
 
 				checkbox := "[ ]"
 				if _, selected := m.selectedImportIdxs[i]; selected {
-					checkbox = successStyle.Render("[x]") // Green check
+					checkbox = successStyle.Render("[x]")
 				}
 
 				details := fmt.Sprintf("%s@%s", pHost.User, pHost.Hostname)
@@ -2080,7 +2307,6 @@ func (m *model) View() string {
 				}
 				keyInfo := ""
 				if pHost.KeyPath != "" {
-					// Use filepath.Base to show only the filename
 					keyInfo = fmt.Sprintf(" (Key: %s)", lipgloss.NewStyle().Faint(true).Render(filepath.Base(pHost.KeyPath)))
 				}
 
@@ -2095,19 +2321,16 @@ func (m *model) View() string {
 			title := fmt.Sprintf("Configure Import: %s (%s@%s)", identifierColor.Render(pHost.Alias), pHost.User, pHost.Hostname)
 			bodyContent.WriteString(titleStyle.Render(title) + "\n\n")
 
-			// Render Remote Root input (index 4)
 			bodyContent.WriteString(m.formInputs[4].View() + "\n")
 
-			// Conditionally render Key Path or Password input if needed
 			authNeeded := pHost.KeyPath == ""
 			if authNeeded {
 				if m.formAuthMethod == authMethodKey {
-					bodyContent.WriteString(m.formInputs[5].View() + "\n") // Key Path
+					bodyContent.WriteString(m.formInputs[5].View() + "\n")
 				} else if m.formAuthMethod == authMethodPassword {
-					bodyContent.WriteString(m.formInputs[6].View() + "\n") // Password
+					bodyContent.WriteString(m.formInputs[6].View() + "\n")
 				}
 
-				// Render Auth Method Selection
 				authFocus := "  "
 				authStyle := lipgloss.NewStyle()
 				// Focus index 2 corresponds to the auth method selector in this context
@@ -2132,7 +2355,6 @@ func (m *model) View() string {
 				bodyContent.WriteString(fmt.Sprintf("  Auth Method: SSH Key File (from ssh_config: %s)\n", lipgloss.NewStyle().Faint(true).Render(pHost.KeyPath)))
 			}
 
-			// Render Error
 			if m.formError != nil {
 				bodyContent.WriteString("\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.formError)))
 			}
@@ -2143,19 +2365,11 @@ func (m *model) View() string {
 		} else {
 			bodyContent.WriteString(titleStyle.Render(fmt.Sprintf("Edit SSH Host: %s", identifierColor.Render(m.hostToEdit.Name))) + "\n\n")
 
-			// Render inputs (pre-filled by createEditForm)
-			for i := 0; i < 5; i++ { // Always render first 5 inputs
+			for i := range 5 {
 				bodyContent.WriteString(m.formInputs[i].View() + "\n")
 			}
 
-			// Conditionally render Key Path or Password input
-			if m.formAuthMethod == authMethodKey {
-				bodyContent.WriteString(m.formInputs[5].View() + "\n") // Key Path
-			} else if m.formAuthMethod == authMethodPassword {
-				bodyContent.WriteString(m.formInputs[6].View() + "\n") // Password
-			}
-
-			// Render Auth Method Selection
+			// Render Auth Method Selection FIRST
 			authFocus := "  "
 			authStyle := lipgloss.NewStyle()
 			numVisibleInputs := 5
@@ -2164,8 +2378,8 @@ func (m *model) View() string {
 			} else if m.formAuthMethod == authMethodPassword {
 				numVisibleInputs++
 			}
-			authMethodFocusIndex := numVisibleInputs
-			if m.formFocusIndex == authMethodFocusIndex { // Check if auth method selector is focused
+			// Check if auth method selector (logical index 5) is focused
+			if m.formFocusIndex == m.getAuthMethodFocusIndex() {
 				authFocus = cursorStyle.Render("> ")
 				authStyle = cursorStyle
 			}
@@ -2182,11 +2396,16 @@ func (m *model) View() string {
 			helpText := "[←/→ to change]"
 			bodyContent.WriteString(fmt.Sprintf("%s%s\n", authFocus, authStyle.Render("Auth Method: "+authMethodStr+" "+helpText)))
 
-			// Render Disabled Toggle
+			if m.formAuthMethod == authMethodKey {
+				bodyContent.WriteString(m.formInputs[5].View() + "\n")
+			} else if m.formAuthMethod == authMethodPassword {
+				bodyContent.WriteString(m.formInputs[6].View() + "\n")
+			}
+
 			disabledFocus := "  "
 			disabledStyle := lipgloss.NewStyle()
-			disabledFocusIndex := numVisibleInputs + 1
-			if m.formFocusIndex == disabledFocusIndex {
+			// Check if disabled toggle (logical index 8) is focused
+			if m.formFocusIndex == m.getDisabledToggleFocusIndex() {
 				disabledFocus = cursorStyle.Render("> ")
 				disabledStyle = cursorStyle
 			}
@@ -2196,7 +2415,6 @@ func (m *model) View() string {
 			}
 			bodyContent.WriteString(fmt.Sprintf("%s%s\n", disabledFocus, disabledStyle.Render(checkbox+" Disabled Host [space to toggle]")))
 
-			// Render Error
 			if m.formError != nil {
 				bodyContent.WriteString("\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.formError)))
 			}
@@ -2211,24 +2429,46 @@ func (m *model) View() string {
 	// --- Footer ---
 	footerContent := strings.Builder{}
 	footerContent.WriteString("\n")
+
 	switch m.currentState {
 	case stateProjectList:
-		// Add loading indicator to footer if discovery is ongoing
+		hasDiscoveryMessage := false
 		if m.isDiscovering {
 			footerContent.WriteString(statusLoadingStyle.Render("Discovering remote projects...") + "\n")
+			hasDiscoveryMessage = true
 		}
-		footerContent.WriteString(m.keymap.Config.Help().Key + ": " + m.keymap.Config.Help().Desc + " | ")
-		footerContent.WriteString("[↑/k ↓/j] Navigate | [Enter] Details | [u] Up | [d] Down | [r] Refresh | [q] Quit")
-		// Display discovery errors in the footer as well
+		hasErrors := false
 		if len(m.discoveryErrors) > 0 {
-			footerContent.WriteString("\n" + errorStyle.Render("Discovery Errors:"))
+			footerContent.WriteString(errorStyle.Render("Discovery Errors:"))
 			for _, err := range m.discoveryErrors {
 				footerContent.WriteString("\n  " + errorStyle.Render(err.Error()))
 			}
-		} else if m.lastError != nil && strings.Contains(m.lastError.Error(), "discovery failed") {
-			// Fallback for general discovery failure message
-			footerContent.WriteString("\n" + errorStyle.Render(fmt.Sprintf("Discovery Warning: %v", m.lastError)))
+			footerContent.WriteString("\n") // Add separator before keys
+			hasErrors = true
+		} else if m.lastError != nil && strings.Contains(m.lastError.Error(), "discovery") {
+			footerContent.WriteString(errorStyle.Render(fmt.Sprintf("Discovery Warning: %v", m.lastError)) + "\n")
+			hasErrors = true
 		}
+
+		if !hasDiscoveryMessage && !hasErrors {
+			footerContent.WriteString("\n")
+		}
+
+		help := strings.Builder{}
+		if len(m.selectedProjectIdxs) > 0 {
+			help.WriteString(fmt.Sprintf("(%d selected) ", len(m.selectedProjectIdxs)))
+		}
+		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + ": navigate | ")
+		help.WriteString(m.keymap.Select.Help().Key + ": " + m.keymap.Select.Help().Desc + " | ")
+		help.WriteString(m.keymap.Enter.Help().Key + ": details | ")
+		help.WriteString(m.keymap.UpAction.Help().Key + ": up | ")
+		help.WriteString(m.keymap.DownAction.Help().Key + ": down | ")
+		help.WriteString(m.keymap.RefreshAction.Help().Key + ": refresh")
+		help.WriteString(" | ")
+		help.WriteString(m.keymap.Config.Help().Key + ": " + m.keymap.Config.Help().Desc + " | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
 	case stateRunningSequence:
 		projectIdentifier := ""
 		if m.sequenceProject != nil {
@@ -2241,7 +2481,12 @@ func (m *model) View() string {
 		} else {
 			footerContent.WriteString(successStyle.Render("Sequence finished successfully."))
 		}
-		footerContent.WriteString("\n[↑/↓ PgUp/PgDn] Scroll | [b/Esc/Enter] Back to List | [q] Quit")
+		help := strings.Builder{}
+		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.PgUp.Help().Key + "/" + m.keymap.PgDown.Help().Key + ": scroll | ")
+		help.WriteString(m.keymap.Back.Help().Key + "/" + m.keymap.Enter.Help().Key + ": back to list | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
 	case stateSequenceError:
 		projectIdentifier := ""
 		if m.sequenceProject != nil {
@@ -2252,44 +2497,84 @@ func (m *model) View() string {
 		} else {
 			footerContent.WriteString(errorStyle.Render(fmt.Sprintf("An unknown error occurred%s.", projectIdentifier)))
 		}
-		footerContent.WriteString("\n[↑/↓ PgUp/PgDn] Scroll | [b/Esc/Enter] Back to List | [q] Quit")
+		help := strings.Builder{}
+		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.PgUp.Help().Key + "/" + m.keymap.PgDown.Help().Key + ": scroll | ")
+		help.WriteString(m.keymap.Back.Help().Key + "/" + m.keymap.Enter.Help().Key + ": back to list | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
 	case stateProjectDetails:
-		footerContent.WriteString("[b/Esc] Back to List | [q] Quit")
+		help := strings.Builder{}
+		help.WriteString(m.keymap.Back.Help().Key + ": back to list | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
 	case stateSshConfigList:
-		footerContent.WriteString(m.keymap.Add.Help().Key + ": " + m.keymap.Add.Help().Desc + " | ")
-		footerContent.WriteString(m.keymap.Edit.Help().Key + ": " + m.keymap.Edit.Help().Desc + " | ")
-		footerContent.WriteString(m.keymap.Remove.Help().Key + ": " + m.keymap.Remove.Help().Desc + " | ")
-		footerContent.WriteString(m.keymap.Import.Help().Key + ": " + m.keymap.Import.Help().Desc + " | ")
-		footerContent.WriteString("[↑/k ↓/j] Navigate | [b/Esc] Back | [q] Quit")
-		// Show import info (green) or error (red) first, then general config error
+		help := strings.Builder{}
+		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + ": navigate | ")
+		help.WriteString(m.keymap.Add.Help().Key + ": " + m.keymap.Add.Help().Desc + " | ")
+		help.WriteString(m.keymap.Edit.Help().Key + ": " + m.keymap.Edit.Help().Desc + " | ")
+		help.WriteString(m.keymap.Remove.Help().Key + ": " + m.keymap.Remove.Help().Desc + " | ")
+		help.WriteString(m.keymap.Import.Help().Key + ": " + m.keymap.Import.Help().Desc + " | ")
+		help.WriteString(m.keymap.Back.Help().Key + ": back | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+
+		errorOrInfo := ""
 		if m.importInfoMsg != "" {
-			footerContent.WriteString("\n" + successStyle.Render(m.importInfoMsg))
+			errorOrInfo = "\n" + successStyle.Render(m.importInfoMsg)
 		} else if m.importError != nil {
-			// Display specific import errors (like failure to save, parse errors, cancellation)
-			footerContent.WriteString("\n" + errorStyle.Render(fmt.Sprintf("Import Error: %v", m.importError)))
+			errorOrInfo = "\n" + errorStyle.Render(fmt.Sprintf("Import Error: %v", m.importError))
 		} else if m.lastError != nil && strings.Contains(m.lastError.Error(), "ssh config") {
-			// Display general config loading errors if no import messages are present
-			footerContent.WriteString("\n" + errorStyle.Render(fmt.Sprintf("Config Error: %v", m.lastError)))
+			errorOrInfo = "\n" + errorStyle.Render(fmt.Sprintf("Config Error: %v", m.lastError))
 		}
+
+		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+		if errorOrInfo != "" {
+			footerContent.WriteString(errorOrInfo)
+		}
+
 	case stateSshConfigRemoveConfirm:
+		help := strings.Builder{}
 		if m.hostToRemove != nil {
-			footerContent.WriteString(fmt.Sprintf("Confirm removal of '%s'? [y/N]", identifierColor.Render(m.hostToRemove.Name))) // Use Render
+			help.WriteString(fmt.Sprintf("Confirm removal of '%s'? ", identifierColor.Render(m.hostToRemove.Name)))
+			help.WriteString(m.keymap.Yes.Help().Key + ": " + m.keymap.Yes.Help().Desc + " | ")
+			help.WriteString(m.keymap.No.Help().Key + "/" + m.keymap.Back.Help().Key + ": " + m.keymap.No.Help().Desc + "/cancel")
 		} else {
-			footerContent.WriteString(errorStyle.Render("Error - no host selected. [Esc/b] Back"))
+			help.WriteString(errorStyle.Render("Error - no host selected. "))
+			help.WriteString(m.keymap.Back.Help().Key + ": back")
 		}
-	case stateSshConfigAddForm:
-		footerContent.WriteString("[↑/↓/Tab/Shift+Tab] Navigate | [Enter] Save | [Esc] Cancel | [q] Quit")
-		// Inline help text "[←/→ to change]" added in the form view itself
+		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
+	case stateSshConfigAddForm, stateSshConfigEditForm:
 		if m.formError != nil {
 			footerContent.WriteString("\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.formError)))
 		}
-	case stateSshConfigImportSelect:
-		footerContent.WriteString("[↑/k ↓/j] Navigate | [space] Toggle Selection | [Enter] Confirm | [Esc/b] Cancel | [q] Quit")
-		if len(m.selectedImportIdxs) > 0 {
-			footerContent.WriteString(fmt.Sprintf(" (%d selected)", len(m.selectedImportIdxs)))
+		help := strings.Builder{}
+		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.Tab.Help().Key + "/" + m.keymap.ShiftTab.Help().Key + ": navigate | ")
+		if m.currentState == stateSshConfigAddForm || m.currentState == stateSshConfigEditForm {
+			help.WriteString(m.keymap.Left.Help().Key + "/" + m.keymap.Right.Help().Key + ": change auth | ")
 		}
+		if m.currentState == stateSshConfigEditForm {
+			help.WriteString(m.keymap.ToggleDisabled.Help().Key + ": " + m.keymap.ToggleDisabled.Help().Desc + " | ")
+		}
+		help.WriteString(m.keymap.Enter.Help().Key + ": save | ")
+		help.WriteString(m.keymap.Esc.Help().Key + ": " + m.keymap.Esc.Help().Desc + " | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
+	case stateSshConfigImportSelect:
+		help := strings.Builder{}
+		if len(m.selectedImportIdxs) > 0 {
+			help.WriteString(fmt.Sprintf(" (%d selected)", len(m.selectedImportIdxs)))
+		}
+		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + ": navigate | ")
+		help.WriteString(m.keymap.Select.Help().Key + ": " + m.keymap.Select.Help().Desc + " | ")
+		help.WriteString(m.keymap.Enter.Help().Key + ": confirm")
+		help.WriteString(" | " + m.keymap.Back.Help().Key + ": cancel | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
 	case stateSshConfigImportDetails:
-		// Calculate remaining hosts
 		remaining := 0
 		for i := m.configuringHostIdx + 1; i < len(m.importableHosts); i++ {
 			if _, ok := m.selectedImportIdxs[i]; ok {
@@ -2300,18 +2585,24 @@ func (m *model) View() string {
 		if remaining != 1 {
 			hostLabel = "hosts"
 		}
-		footerContent.WriteString(fmt.Sprintf("[↑/↓/Tab/Shift+Tab] Navigate | [Enter] Confirm & Next (%d %s remaining) | [Esc] Cancel Import | [q] Quit", remaining, hostLabel))
-		// Inline help text "[←/→ to change]" added in the form view itself
 		if m.formError != nil {
 			footerContent.WriteString("\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.formError)))
 		}
+		help := strings.Builder{}
+		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.Tab.Help().Key + "/" + m.keymap.ShiftTab.Help().Key + ": navigate | ")
+		help.WriteString(m.keymap.Left.Help().Key + "/" + m.keymap.Right.Help().Key + ": change auth | ")
+		help.WriteString(fmt.Sprintf("%s: confirm & next (%d %s remaining) | ", m.keymap.Enter.Help().Key, remaining, hostLabel))
+		help.WriteString(m.keymap.Esc.Help().Key + ": cancel import | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
 
 	default: // Loading projects state
-		footerContent.WriteString("[q] Quit")
+		help := strings.Builder{}
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
 	}
 	footer = footerContent.String()
 
-	// Combine header, body, footer using lipgloss
 	finalView := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 	return finalView
 }
