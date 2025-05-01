@@ -4,22 +4,42 @@
 package runner
 
 import (
+	"bucket-manager/internal/discovery"
+	"bucket-manager/internal/ssh"
+	"bucket-manager/internal/util"
 	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+
 	"os/exec"
+	"path/filepath"
+
 	"strings"
 	"syscall"
+
+	gossh "golang.org/x/crypto/ssh"
 )
 
-// CommandStep defines a single command to be executed.
+// sshManager is a package-level variable holding the SSH connection manager.
+// This should be initialized by the calling code (CLI/TUI).
+var sshManager *ssh.Manager
+
+// InitSSHManager allows the main application to set the SSH manager instance.
+func InitSSHManager(manager *ssh.Manager) {
+	if sshManager != nil {
+		return
+	}
+	sshManager = manager
+}
+
+// CommandStep defines a single command to be executed for a specific project.
 type CommandStep struct {
-	Name    string   // User-friendly name for the step
-	Command string   // The command to run (e.g., "podman")
-	Args    []string // Arguments for the command
-	Dir     string   // Directory to run the command in (optional)
+	Name    string            // User-friendly name for the step
+	Command string            // The command to run (e.g., "podman")
+	Args    []string          // Arguments for the command
+	Project discovery.Project // The target project (local or remote)
 }
 
 // OutputLine represents a line of output from a command stream.
@@ -28,145 +48,212 @@ type OutputLine struct {
 	IsError bool // True if the line came from stderr
 }
 
-// StreamCommand executes a command step and streams its stdout and stderr.
-// It returns a channel for output lines and a channel for the final error.
+// StreamCommand executes a command step (local or remote) and streams its stdout/stderr.
 func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 	outChan := make(chan OutputLine)
-	errChan := make(chan error, 1) // Buffered channel for the final error
+	errChan := make(chan error, 1)
 
 	go func() {
 		defer close(outChan)
 		defer close(errChan)
 
-		cmd := exec.Command(step.Command, step.Args...)
-		if step.Dir != "" {
-			cmd.Dir = step.Dir
-		}
+		cmdDesc := fmt.Sprintf("step '%s' for project %s", step.Name, step.Project.Identifier())
 
-		// Get pipes for stdout and stderr
-		stdoutPipe, err := cmd.StdoutPipe()
-		if err != nil {
-			errChan <- fmt.Errorf("failed to get stdout pipe for step '%s': %w", step.Name, err)
-			return
-		}
-		stderrPipe, err := cmd.StderrPipe()
-		if err != nil {
-			errChan <- fmt.Errorf("failed to get stderr pipe for step '%s': %w", step.Name, err)
-			return
-		}
-
-		// Start the command
-		if err := cmd.Start(); err != nil {
-			errChan <- fmt.Errorf("failed to start command for step '%s': %w", step.Name, err)
-			return
-		}
-
-		outputDone := make(chan struct{}, 2) // Signal channel for stream completion
-
-		go func() {
-			defer func() { outputDone <- struct{}{} }() // Signal completion
-			scanner := bufio.NewScanner(stdoutPipe)
-			for scanner.Scan() {
-				outChan <- OutputLine{Line: scanner.Text(), IsError: false}
+		if step.Project.IsRemote {
+			// --- Remote Execution via Internal SSH Client ---
+			if sshManager == nil {
+				errChan <- fmt.Errorf("ssh manager not initialized")
+				return
 			}
-			if err := scanner.Err(); err != nil {
-				// Log scanner error, but don't send it as the primary command error
-				fmt.Fprintf(io.Discard, "stdout scanner error for step '%s': %v\n", step.Name, err)
+			if step.Project.HostConfig == nil {
+				errChan <- fmt.Errorf("internal error: HostConfig is nil for remote project %s", step.Project.Identifier())
+				return
 			}
-		}()
 
-		go func() {
-			defer func() { outputDone <- struct{}{} }() // Signal completion
-			scanner := bufio.NewScanner(stderrPipe)
-			for scanner.Scan() {
-				outChan <- OutputLine{Line: scanner.Text(), IsError: true}
+			client, err := sshManager.GetClient(*step.Project.HostConfig)
+			if err != nil {
+				errChan <- fmt.Errorf("failed to get ssh client for %s: %w", cmdDesc, err)
+				return
 			}
-			if err := scanner.Err(); err != nil {
-				// Log scanner error
-				fmt.Fprintf(io.Discard, "stderr scanner error for step '%s': %v\n", step.Name, err)
+
+			session, err := client.NewSession()
+			if err != nil {
+				errChan <- fmt.Errorf("failed to create ssh session for %s: %w", cmdDesc, err)
+				return
 			}
-		}()
+			defer session.Close()
 
-		cmdErr := cmd.Wait()
+			stdoutPipe, err := session.StdoutPipe()
+			if err != nil {
+				errChan <- fmt.Errorf("failed to get ssh stdout pipe for %s: %w", cmdDesc, err)
+				return
+			}
+			stderrPipe, err := session.StderrPipe()
+			if err != nil {
+				errChan <- fmt.Errorf("failed to get ssh stderr pipe for %s: %w", cmdDesc, err)
+				return
+			}
 
-		// Wait for readers to finish
-		<-outputDone
-		<-outputDone
+			// Construct the remote command string (cd && command args...)
+			remoteCmdParts := []string{"cd", util.QuoteArgForShell(filepath.Join(step.Project.HostConfig.RemoteRoot, step.Project.Path)), "&&", step.Command}
+			for _, arg := range step.Args {
+				remoteCmdParts = append(remoteCmdParts, util.QuoteArgForShell(arg))
+			}
+			remoteCmdString := strings.Join(remoteCmdParts, " ")
 
-		if cmdErr != nil {
-			if exitError, ok := cmdErr.(*exec.ExitError); ok {
-				if status, ok := exitError.Sys().(syscall.WaitStatus); ok {
-					errChan <- fmt.Errorf("command exited with status %d: %w", status.ExitStatus(), cmdErr)
-					return
+			// Start the remote command
+			if err := session.Start(remoteCmdString); err != nil {
+				errChan <- fmt.Errorf("failed to start remote command for %s: %w", cmdDesc, err)
+				return
+			}
+
+			outputDone := make(chan struct{}, 2)
+			go streamPipe(stdoutPipe, outChan, outputDone, false, cmdDesc)
+			go streamPipe(stderrPipe, outChan, outputDone, true, cmdDesc)
+
+			cmdErr := session.Wait()
+
+			<-outputDone
+			<-outputDone
+
+			if cmdErr != nil {
+				exitCode := -1
+				if exitErr, ok := cmdErr.(*gossh.ExitError); ok {
+					exitCode = exitErr.ExitStatus()
 				}
+				if exitCode != -1 {
+					errChan <- fmt.Errorf("%s exited with status %d: %w", cmdDesc, exitCode, cmdErr)
+				} else {
+					errChan <- fmt.Errorf("%s failed: %w", cmdDesc, cmdErr)
+				}
+				return
 			}
-			errChan <- fmt.Errorf("command failed: %w", cmdErr)
-			return
-		}
 
-		// Success is signaled by closing errChan without sending an error
+		} else {
+			// --- Local Execution (using os/exec) ---
+			cmd := exec.Command(step.Command, step.Args...)
+			cmd.Dir = step.Project.Path
+			localCmdDesc := fmt.Sprintf("local %s", cmdDesc)
+
+			stdoutPipe, err := cmd.StdoutPipe()
+			if err != nil {
+				errChan <- fmt.Errorf("failed to get stdout pipe for %s: %w", localCmdDesc, err)
+				return
+			}
+			stderrPipe, err := cmd.StderrPipe()
+			if err != nil {
+				errChan <- fmt.Errorf("failed to get stderr pipe for %s: %w", localCmdDesc, err)
+				return
+			}
+
+			if err := cmd.Start(); err != nil {
+				errChan <- fmt.Errorf("failed to start %s: %w", localCmdDesc, err)
+				return
+			}
+
+			outputDone := make(chan struct{}, 2)
+			go streamPipe(stdoutPipe, outChan, outputDone, false, localCmdDesc)
+			go streamPipe(stderrPipe, outChan, outputDone, true, localCmdDesc)
+
+			cmdErr := cmd.Wait()
+
+			<-outputDone
+			<-outputDone
+
+			if cmdErr != nil {
+				exitCode := -1
+				if exitError, ok := cmdErr.(*exec.ExitError); ok {
+					if status, ok := exitError.Sys().(syscall.WaitStatus); ok {
+						exitCode = status.ExitStatus()
+					}
+				}
+				if exitCode != -1 {
+					errChan <- fmt.Errorf("%s exited with status %d: %w", localCmdDesc, exitCode, cmdErr)
+				} else {
+					errChan <- fmt.Errorf("%s failed: %w", localCmdDesc, cmdErr)
+				}
+				return
+			}
+		}
 	}()
 
 	return outChan, errChan
 }
 
+// streamPipe reads from an io.Reader (like stdout/stderr pipe) and sends lines to outChan.
+func streamPipe(pipe io.Reader, outChan chan<- OutputLine, doneChan chan<- struct{}, isError bool, cmdDesc string) {
+	defer func() { doneChan <- struct{}{} }()
+	scanner := bufio.NewScanner(pipe)
+	for scanner.Scan() {
+		outChan <- OutputLine{Line: scanner.Text(), IsError: isError}
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(io.Discard, "%s pipe scanner error for %s: %v\n", map[bool]string{false: "stdout", true: "stderr"}[isError], cmdDesc, err)
+	}
+}
+
 // --- Command Sequences ---
+// These now take the Project struct to associate steps with the target.
 
-func UpSequence(projectPath string) []CommandStep {
-	return []CommandStep{
-		{
-			Name:    "Pull Images",
-			Command: "podman",
-			Args:    []string{"compose", "-f", "compose.yaml", "pull"}, // Assuming compose.yaml, adjust if needed
-			Dir:     projectPath,
-		},
-		{
-			Name:    "Start Containers",
-			Command: "podman",
-			Args:    []string{"compose", "-f", "compose.yaml", "up", "-d"},
-			Dir:     projectPath,
-		},
-	}
-}
-
-func DownSequence(projectPath string) []CommandStep {
-	return []CommandStep{
-		{
-			Name:    "Stop Containers",
-			Command: "podman",
-			Args:    []string{"compose", "-f", "compose.yaml", "down"},
-			Dir:     projectPath,
-		},
-	}
-}
-
-func RefreshSequence(projectPath string) []CommandStep {
+func UpSequence(project discovery.Project) []CommandStep {
 	return []CommandStep{
 		{
 			Name:    "Pull Images",
 			Command: "podman",
 			Args:    []string{"compose", "-f", "compose.yaml", "pull"},
-			Dir:     projectPath,
-		},
-		{
-			Name:    "Stop Containers",
-			Command: "podman",
-			Args:    []string{"compose", "-f", "compose.yaml", "down"},
-			Dir:     projectPath,
+			Project: project,
 		},
 		{
 			Name:    "Start Containers",
 			Command: "podman",
 			Args:    []string{"compose", "-f", "compose.yaml", "up", "-d"},
-			Dir:     projectPath,
-		},
-		// Optional: Add a prune step if desired
-		{
-			Name:    "Prune System",
-			Command: "podman",
-			Args:    []string{"system", "prune", "-af"}, // System-wide command
+			Project: project,
 		},
 	}
+}
+
+func DownSequence(project discovery.Project) []CommandStep {
+	return []CommandStep{
+		{
+			Name:    "Stop Containers",
+			Command: "podman",
+			Args:    []string{"compose", "-f", "compose.yaml", "down"},
+			Project: project,
+		},
+	}
+}
+
+func RefreshSequence(project discovery.Project) []CommandStep {
+	steps := []CommandStep{
+		{
+			Name:    "Pull Images",
+			Command: "podman",
+			Args:    []string{"compose", "-f", "compose.yaml", "pull"},
+			Project: project,
+		},
+		{
+			Name:    "Stop Containers",
+			Command: "podman",
+			Args:    []string{"compose", "-f", "compose.yaml", "down"},
+			Project: project,
+		},
+		{
+			Name:    "Start Containers",
+			Command: "podman",
+			Args:    []string{"compose", "-f", "compose.yaml", "up", "-d"},
+			Project: project,
+		},
+	}
+	// Only prune the *local* system if the project is local
+	if !project.IsRemote {
+		steps = append(steps, CommandStep{
+			Name:    "Prune Local System",
+			Command: "podman",
+			Args:    []string{"system", "prune", "-af"},
+			Project: project,
+		})
+	}
+	return steps
 }
 
 // --- Status Logic ---
@@ -191,46 +278,105 @@ type ContainerState struct {
 
 // ProjectRuntimeInfo holds the status information for a project.
 type ProjectRuntimeInfo struct {
+	Project       discovery.Project
 	OverallStatus ProjectStatus
 	Containers    []ContainerState
 	Error         error
 }
 
-func GetProjectStatus(projectPath string) ProjectRuntimeInfo {
-	info := ProjectRuntimeInfo{OverallStatus: StatusUnknown}
+// GetProjectStatus retrieves the status of a project, using internal SSH client if remote.
+func GetProjectStatus(project discovery.Project) ProjectRuntimeInfo {
+	// Initialize info with the project itself
+	info := ProjectRuntimeInfo{Project: project, OverallStatus: StatusUnknown}
+	cmdDesc := fmt.Sprintf("status check for project %s", project.Identifier())
+	psArgs := []string{"compose", "-f", "compose.yaml", "ps", "--format", "json", "-a"}
 
-	cmd := exec.Command("podman", "compose", "-f", "compose.yaml", "ps", "--format", "json", "-a")
-	cmd.Dir = projectPath
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	var output []byte
+	var err error
+	var stderrStr string
 
-	err := cmd.Run()
+	if project.IsRemote {
+		// --- Remote Status via Internal SSH Client ---
+		if sshManager == nil {
+			info.OverallStatus = StatusError
+			info.Error = fmt.Errorf("ssh manager not initialized for %s", cmdDesc)
+			return info
+		}
+		if project.HostConfig == nil {
+			info.OverallStatus = StatusError
+			info.Error = fmt.Errorf("internal error: HostConfig is nil for %s", cmdDesc)
+			return info
+		}
+
+		client, clientErr := sshManager.GetClient(*project.HostConfig)
+		if clientErr != nil {
+			info.OverallStatus = StatusError
+			info.Error = fmt.Errorf("failed to get ssh client for %s: %w", cmdDesc, clientErr)
+			return info
+		}
+
+		session, sessionErr := client.NewSession()
+		if sessionErr != nil {
+			info.OverallStatus = StatusError
+			info.Error = fmt.Errorf("failed to create ssh session for %s: %w", cmdDesc, sessionErr)
+			return info
+		}
+		defer session.Close()
+
+		// Construct remote command
+		remoteCmdParts := []string{"cd", util.QuoteArgForShell(filepath.Join(project.HostConfig.RemoteRoot, project.Path)), "&&", "podman"}
+		for _, arg := range psArgs {
+			remoteCmdParts = append(remoteCmdParts, util.QuoteArgForShell(arg))
+		}
+		remoteCmdString := strings.Join(remoteCmdParts, " ")
+
+		// Run the command and capture combined output
+		output, err = session.CombinedOutput(remoteCmdString)
+		stderrStr = string(output)
+
+	} else {
+		// --- Local Status (using os/exec) ---
+		cmd := exec.Command("podman", psArgs...)
+		cmd.Dir = project.Path
+		var stdoutBuf, stderrBuf bytes.Buffer
+		cmd.Stdout = &stdoutBuf
+		cmd.Stderr = &stderrBuf
+
+		err = cmd.Run()
+		output = stdoutBuf.Bytes()
+		stderrStr = stderrBuf.String()
+	}
+
+	// --- Process Results (Common for Local and Remote) ---
+	stderrTrimmed := strings.TrimSpace(stderrStr)
 	if err != nil {
-		stderrStr := stderr.String()
-		if strings.Contains(stderrStr, "no containers found") {
+		if strings.Contains(stderrTrimmed, "no containers found") || strings.Contains(stderrTrimmed, "no such file or directory") {
 			info.OverallStatus = StatusDown
 			return info
 		}
+
 		info.OverallStatus = StatusError
-		info.Error = fmt.Errorf("failed to run 'podman compose ps': %w\nStderr: %s", err, stderrStr)
+		errMsg := fmt.Sprintf("failed to run %s", cmdDesc)
+		if stderrTrimmed != "" {
+			errMsg = fmt.Sprintf("%s: %s", errMsg, stderrTrimmed)
+		}
+		info.Error = fmt.Errorf("%s: %w", errMsg, err)
 		return info
 	}
 
-	if stdout.Len() == 0 {
-		// Assume DOWN if ps runs ok but gives no output
+	if len(bytes.TrimSpace(output)) == 0 {
 		info.OverallStatus = StatusDown
 		return info
 	}
 
-	// Decode the JSON output (one object per line)
+	// Decode the JSON output
 	var containers []ContainerState
-	scanner := bufio.NewScanner(&stdout)
+	scanner := bufio.NewScanner(bytes.NewReader(output))
 	for scanner.Scan() {
 		var container ContainerState
 		line := scanner.Bytes()
 		if len(bytes.TrimSpace(line)) == 0 {
-			continue // Skip empty lines
+			continue
 		}
 		if err := json.Unmarshal(line, &container); err != nil {
 			info.OverallStatus = StatusError

@@ -4,18 +4,23 @@
 package cli
 
 import (
+	"bucket-manager/internal/config"
 	"bucket-manager/internal/discovery"
 	"bucket-manager/internal/runner"
+	"bucket-manager/internal/ssh"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/briandowns/spinner"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
 
 var (
+	sshManager         *ssh.Manager // SSH Manager instance
 	statusColor        = color.New(color.FgCyan)
 	errorColor         = color.New(color.FgRed)
 	stepColor          = color.New(color.FgYellow)
@@ -24,46 +29,133 @@ var (
 	statusDownColor    = color.New(color.FgRed)
 	statusPartialColor = color.New(color.FgYellow)
 	statusErrorColor   = color.New(color.FgMagenta)
+	identifierColor    = color.New(color.FgBlue) // For project identifiers
 )
 
-// getComposeRootOrExit gets the compose root directory or prints an error and exits.
-func getComposeRootOrExit() string {
-	rootDir, err := discovery.GetComposeRootDirectory()
-	if err != nil {
-		errorColor.Fprintf(os.Stderr, "Error finding compose directory: %v\n", err)
-		os.Exit(1)
-	}
-	return rootDir
-}
+// findProjectByIdentifier searches the list of projects for one matching the identifier.
+// Identifier can be "projectName" or "projectName (serverName)".
+// Returns an error if not found or if the short name is ambiguous.
+func findProjectByIdentifier(projects []discovery.Project, identifier string) (discovery.Project, error) {
+	identifier = strings.TrimSpace(identifier)
+	targetName := identifier
+	targetServer := ""
 
-// projectCompletionFunc provides dynamic completion for project names.
-func projectCompletionFunc(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	rootDir, err := discovery.GetComposeRootDirectory()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "completion error getting root dir: %v\n", err)
-		return nil, cobra.ShellCompDirectiveError
-	}
-	projects, err := discovery.FindProjects(rootDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "completion error finding projects in %s: %v\n", rootDir, err)
-		return nil, cobra.ShellCompDirectiveError
-	}
-
-	var projectNames []string
-	for _, p := range projects {
-		// Only suggest projects that start with the currently typed string
-		if strings.HasPrefix(p.Name, toComplete) {
-			projectNames = append(projectNames, p.Name)
+	// Check if identifier includes server name like "project (server)"
+	if strings.HasSuffix(identifier, ")") {
+		lastOpenParen := strings.LastIndex(identifier, " (")
+		if lastOpenParen > 0 {
+			targetName = strings.TrimSpace(identifier[:lastOpenParen])
+			targetServer = strings.TrimSpace(identifier[lastOpenParen+2 : len(identifier)-1])
 		}
 	}
 
-	return projectNames, cobra.ShellCompDirectiveNoFileComp
+	var foundProject *discovery.Project
+	var potentialMatches []discovery.Project
+
+	for i := range projects {
+		p := projects[i] // Create a local copy for the loop iteration
+		if p.Name == targetName {
+			if targetServer == "" {
+				// No server specified in identifier, add to potential matches
+				potentialMatches = append(potentialMatches, p)
+				foundProject = &p // Tentatively set foundProject
+			} else if p.ServerName == targetServer {
+				// Exact match for name and server
+				return p, nil
+			}
+		}
+	}
+
+	// Post-loop evaluation for cases where server wasn't specified
+	if targetServer == "" {
+		if len(potentialMatches) == 1 {
+			return *foundProject, nil // Exactly one match found
+		}
+		if len(potentialMatches) > 1 {
+			// Ambiguous short name
+			options := []string{}
+			for _, pm := range potentialMatches {
+				options = append(options, fmt.Sprintf("%s (%s)", pm.Name, pm.ServerName))
+			}
+			return discovery.Project{}, fmt.Errorf("project name '%s' is ambiguous, please specify one of: %s", targetName, strings.Join(options, ", "))
+		}
+	}
+
+	// If we reach here, no match was found (either specific or general)
+	return discovery.Project{}, fmt.Errorf("project '%s' not found", identifier)
+}
+
+// projectCompletionFunc provides dynamic completion for project identifiers "projectName (serverName)".
+func projectCompletionFunc(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	// Completion needs to be synchronous. Read from channels until closed.
+	projectChan, errorChan, _ := discovery.FindProjects()
+	var projects []discovery.Project
+	var errors []error
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for p := range projectChan {
+			projects = append(projects, p)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for e := range errorChan {
+			errors = append(errors, e)
+		}
+	}()
+	wg.Wait() // Wait for channels to close
+
+	if len(errors) > 0 {
+		// Log first error to stderr for debugging completion issues
+		fmt.Fprintf(os.Stderr, "completion error finding projects: %v\n", errors[0])
+		// Optionally log all errors? For now, just the first.
+		// return nil, cobra.ShellCompDirectiveError // Can still provide completions based on partial results
+	}
+
+	var projectIdentifiers []string
+	for _, p := range projects { // Iterate over the collected slice
+		identifier := fmt.Sprintf("%s (%s)", p.Name, p.ServerName)
+		// Only suggest projects that start with the currently typed string
+		if strings.HasPrefix(identifier, toComplete) {
+			projectIdentifiers = append(projectIdentifiers, identifier)
+		} else if strings.HasPrefix(p.Name, toComplete) && !strings.Contains(toComplete, "(") {
+			// Also suggest if just the name matches and user hasn't started typing server
+			projectIdentifiers = append(projectIdentifiers, identifier)
+		}
+	}
+
+	return projectIdentifiers, cobra.ShellCompDirectiveNoFileComp
 }
 
 var rootCmd = &cobra.Command{
 	Use:   "bm",
 	Short: "Bucket Manager CLI",
-	Long:  `A command-line interface to manage multiple Podman Compose projects found in ~/bucket or ~/compose-bucket.`,
+	Long: `A command-line interface to manage multiple Podman Compose projects.
+
+Discovers projects in standard local directories (~/bucket, ~/compose-bucket)
+and on remote hosts configured via SSH (~/.config/bucket-manager/config.yaml).`,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Ensure the config directory exists
+		if err := config.EnsureConfigDir(); err != nil {
+			return fmt.Errorf("failed to ensure config directory: %w", err)
+		}
+		// Initialize SSH Manager
+		sshManager = ssh.NewManager()
+		// Pass manager to discovery and runner packages
+		discovery.InitSSHManager(sshManager)
+		runner.InitSSHManager(sshManager)
+		return nil
+	},
+	PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
+		// Close SSH connections when CLI exits
+		if sshManager != nil {
+			sshManager.CloseAll()
+		}
+		return nil
+	},
 }
 
 // RunCLI executes the Cobra CLI application.
@@ -75,6 +167,7 @@ func RunCLI() {
 }
 
 func init() {
+	// Add commands to root
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(upCmd)
 	rootCmd.AddCommand(downCmd)
@@ -86,152 +179,238 @@ func init() {
 
 var listCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List discovered Podman Compose projects",
+	Short: "List discovered Podman Compose projects (local and remote)",
 	Run: func(cmd *cobra.Command, args []string) {
-		rootDir := getComposeRootOrExit()
-		projects, err := discovery.FindProjects(rootDir)
-		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error finding projects in %s: %v\n", rootDir, err)
+		statusColor.Println("Discovering projects...") // Indicate discovery start
+		projectChan, errorChan, _ := discovery.FindProjects()
+
+		var collectedErrors []error
+		var projectsFound bool
+		var wg sync.WaitGroup // WaitGroup to wait for error channel reading
+		wg.Add(1)
+
+		// Goroutine to collect errors and print them as they arrive
+		go func() {
+			defer wg.Done()
+			for err := range errorChan {
+				collectedErrors = append(collectedErrors, err)
+				errorColor.Fprintf(os.Stderr, "Error during discovery: %v\n", err)
+			}
+		}()
+
+		// Process projects as they arrive
+		fmt.Println("\nDiscovered projects:") // Print header immediately
+
+		// Start spinner while waiting for all projects
+		s := spinner.New(spinner.CharSets[14], 100*time.Millisecond) // Use a suitable charset
+		s.Color("cyan")                                              // Add color
+		s.Suffix = " Loading remote projects..."
+		s.Start()
+
+		for project := range projectChan {
+			s.Stop() // Stop spinner briefly to print project
+			projectsFound = true
+			fmt.Printf("- %s (%s)\n", project.Name, identifierColor.Sprint(project.ServerName))
+			s.Restart() // Restart spinner after printing
+		}
+		s.Stop() // Stop spinner permanently after loop finishes
+
+		// Wait for error collection to finish
+		wg.Wait()
+
+		// Final status messages
+		if !projectsFound && len(collectedErrors) == 0 {
+			fmt.Println("\nNo Podman Compose projects found locally or on configured remote hosts.")
+		} else if !projectsFound && len(collectedErrors) > 0 {
+			// Error message was already printed when the error arrived
+			fmt.Println("\nNo projects discovered successfully.")
+		}
+
+		// Exit with non-zero status if errors occurred during discovery
+		if len(collectedErrors) > 0 {
 			os.Exit(1)
-		}
-		if len(projects) == 0 {
-			fmt.Printf("No Podman Compose projects found in %s.\n", rootDir)
-			return
-		}
-		statusColor.Println("Discovered projects:")
-		for _, p := range projects {
-			fmt.Printf("- %s (%s)\n", p.Name, p.Path)
 		}
 	},
 }
 
+// runProjectAction is a helper to reduce repetition in up/down/refresh commands
+func runProjectAction(action string, args []string) {
+	if len(args) != 1 {
+		errorColor.Fprintf(os.Stderr, "Error: requires exactly one project identifier argument.\n")
+		os.Exit(1)
+	}
+	projectIdentifier := args[0]
+
+	statusColor.Println("Discovering projects...") // Indicate discovery start
+	// Collect all projects and errors first for action commands
+	projectChan, errorChan, _ := discovery.FindProjects()
+	var allProjects []discovery.Project
+	var errors []error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for p := range projectChan {
+			allProjects = append(allProjects, p)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for e := range errorChan {
+			errors = append(errors, e)
+		}
+	}()
+	wg.Wait() // Wait for discovery to complete
+
+	if len(errors) > 0 {
+		errorColor.Fprintln(os.Stderr, "\nErrors during project discovery:")
+		for _, err := range errors {
+			errorColor.Fprintf(os.Stderr, "- %v\n", err)
+		}
+		// Exit even if some projects were found, as the target might be missing due to error
+		os.Exit(1)
+	}
+	if len(allProjects) == 0 {
+		errorColor.Fprintf(os.Stderr, "\nError: No projects found.\n")
+		os.Exit(1)
+	}
+
+	targetProject, err := findProjectByIdentifier(allProjects, projectIdentifier) // Use collected slice
+	if err != nil {
+		errorColor.Fprintf(os.Stderr, "\nError: %v\n", err)
+		os.Exit(1)
+	}
+
+	statusColor.Printf("Executing '%s' action for project: %s (%s)\n", action, targetProject.Name, identifierColor.Sprint(targetProject.ServerName))
+
+	var sequence []runner.CommandStep
+	switch action {
+	case "up":
+		sequence = runner.UpSequence(targetProject)
+	case "down":
+		sequence = runner.DownSequence(targetProject)
+	case "refresh":
+		sequence = runner.RefreshSequence(targetProject)
+	default:
+		errorColor.Fprintf(os.Stderr, "Internal Error: Invalid action '%s'\n", action)
+		os.Exit(1)
+	}
+
+	err = runSequence(targetProject, sequence) // Pass the full project struct
+	if err != nil {
+		errorColor.Fprintf(os.Stderr, "\n'%s' action failed for %s (%s): %v\n", action, targetProject.Name, targetProject.ServerName, err)
+		os.Exit(1)
+	}
+	successColor.Printf("'%s' action completed successfully for %s (%s).\n", action, targetProject.Name, identifierColor.Sprint(targetProject.ServerName))
+}
+
 var upCmd = &cobra.Command{
-	Use:               "up [project-name]",
+	Use:               "up <project-identifier>",
 	Short:             "Run 'pull' and 'up -d' for a project",
-	Args:              cobra.ExactArgs(1),
+	Example:           "  bm up my-local-app\n  bm up 'remote-app (server1)'",
+	Args:              cobra.ExactArgs(1), // Validated in runProjectAction
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
-		rootDir := getComposeRootOrExit()
-		projectName := args[0]
-		projectPath := filepath.Join(rootDir, projectName)
-		// Verify project exists before running sequence
-		if _, err := os.Stat(filepath.Join(projectPath, "compose.yaml")); os.IsNotExist(err) {
-			if _, errYml := os.Stat(filepath.Join(projectPath, "compose.yml")); os.IsNotExist(errYml) {
-				errorColor.Fprintf(os.Stderr, "Error: Project '%s' not found or missing compose file in %s.\n", projectName, projectPath)
-				os.Exit(1)
-			}
-		}
-		statusColor.Printf("Executing 'up' action for project: %s (in %s)\n", projectName, rootDir)
-		sequence := runner.UpSequence(projectPath)
-		err := runSequence(projectName, rootDir, sequence)
-		if err != nil {
-			errorColor.Fprintf(os.Stderr, "\n'up' action failed for %s: %v\n", projectName, err)
-			os.Exit(1)
-		}
-		successColor.Printf("'up' action completed successfully for %s.\n", projectName)
+		runProjectAction("up", args)
 	},
 }
 
 var downCmd = &cobra.Command{
-	Use:               "down [project-name]",
+	Use:               "down <project-identifier>",
 	Short:             "Run 'podman compose down' for a project",
-	Args:              cobra.ExactArgs(1),
+	Example:           "  bm down my-local-app\n  bm down 'remote-app (server1)'",
+	Args:              cobra.ExactArgs(1), // Validated in runProjectAction
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
-		rootDir := getComposeRootOrExit()
-		projectName := args[0]
-		projectPath := filepath.Join(rootDir, projectName)
-		// Verify project exists
-		if _, err := os.Stat(filepath.Join(projectPath, "compose.yaml")); os.IsNotExist(err) {
-			if _, errYml := os.Stat(filepath.Join(projectPath, "compose.yml")); os.IsNotExist(errYml) {
-				errorColor.Fprintf(os.Stderr, "Error: Project '%s' not found or missing compose file in %s.\n", projectName, projectPath)
-				os.Exit(1)
-			}
-		}
-		statusColor.Printf("Executing 'down' action for project: %s (in %s)\n", projectName, rootDir)
-		sequence := runner.DownSequence(projectPath)
-		err := runSequence(projectName, rootDir, sequence)
-		if err != nil {
-			errorColor.Fprintf(os.Stderr, "\n'down' action failed for %s: %v\n", projectName, err)
-			os.Exit(1)
-		}
-		successColor.Printf("'down' action completed successfully for %s.\n", projectName)
+		runProjectAction("down", args)
 	},
 }
 
 var refreshCmd = &cobra.Command{
-	Use:               "refresh [project-name]",
-	Short:             "Run 'pull', 'down', 'up', and 'prune' for a project",
-	Args:              cobra.ExactArgs(1),
+	Use:               "refresh <project-identifier>",
+	Short:             "Run 'pull', 'down', 'up', and maybe 'prune' for a project",
+	Long:              `Runs 'pull', 'down', 'up -d' for the specified project. Additionally runs 'podman system prune -af' locally if the target project is local.`,
+	Example:           "  bm refresh my-local-app\n  bm refresh 'remote-app (server1)'",
+	Args:              cobra.ExactArgs(1), // Validated in runProjectAction
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
-		rootDir := getComposeRootOrExit()
-		projectName := args[0]
-		projectPath := filepath.Join(rootDir, projectName)
-		// Verify project exists
-		if _, err := os.Stat(filepath.Join(projectPath, "compose.yaml")); os.IsNotExist(err) {
-			if _, errYml := os.Stat(filepath.Join(projectPath, "compose.yml")); os.IsNotExist(errYml) {
-				errorColor.Fprintf(os.Stderr, "Error: Project '%s' not found or missing compose file in %s.\n", projectName, projectPath)
-				os.Exit(1)
-			}
-		}
-		statusColor.Printf("Executing 'refresh' action for project: %s (in %s)\n", projectName, rootDir)
-		sequence := runner.RefreshSequence(projectPath)
-		err := runSequence(projectName, rootDir, sequence)
-		if err != nil {
-			errorColor.Fprintf(os.Stderr, "\n'refresh' action failed for %s: %v\n", projectName, err)
-			os.Exit(1)
-		}
-		successColor.Printf("'refresh' action completed successfully for %s.\n", projectName)
+		runProjectAction("refresh", args)
 	},
 }
 
 // --- statusCmd ---
 var statusCmd = &cobra.Command{
-	Use:   "status [project-name]",
+	Use:   "status [project-identifier]",
 	Short: "Show the status of containers for one or all projects",
-	Long: `Shows the status of Podman Compose containers.
-If a project name is provided, shows status for that specific project.
+	Long: `Shows the status of Podman Compose containers for local and remote projects.
+If a project identifier (e.g., my-app or 'remote-app (server1)') is provided, shows status for that specific project.
 Otherwise, shows status for all discovered projects.`,
+	Example:           "  bm status\n  bm status my-local-app\n  bm status 'remote-app (server1)'",
 	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
-		rootDir := getComposeRootOrExit()
-		var projectsToScan []discovery.Project
-
-		allProjects, findErr := discovery.FindProjects(rootDir)
-		if findErr != nil {
-			errorColor.Fprintf(os.Stderr, "Error finding projects in %s: %v\n", rootDir, findErr)
-			os.Exit(1)
+		var collectedErrors []error
+		var projectsFound bool
+		var specificProjectIdentifier string
+		scanAll := len(args) == 0
+		if !scanAll {
+			specificProjectIdentifier = args[0]
 		}
 
-		if len(args) == 1 {
-			projectName := args[0]
-			found := false
-			for _, p := range allProjects {
-				if p.Name == projectName {
-					projectsToScan = append(projectsToScan, p)
-					found = true
-					break
+		statusColor.Println("Discovering projects and checking status...")
+		projectChan, errorChan, _ := discovery.FindProjects()
+		statusChan := make(chan runner.ProjectRuntimeInfo, 10)
+		var errWg sync.WaitGroup
+		var statusWg sync.WaitGroup
+		errWg.Add(1)
+
+		// Goroutine to collect discovery errors
+		go func() {
+			defer errWg.Done()
+			for err := range errorChan {
+				collectedErrors = append(collectedErrors, err)
+				// Print error directly without stopping spinner
+				errorColor.Fprintf(os.Stderr, "\nError during discovery: %v\n", err)
+			}
+		}()
+
+		// Start spinner
+		s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
+		s.Color("cyan")
+		s.Suffix = " Discovering and checking status..."
+		s.Start()
+
+		// Launch status check goroutines as projects are discovered
+		go func() {
+			for project := range projectChan {
+				projectsFound = true
+				processThisProject := scanAll
+				if !scanAll {
+					if project.Identifier() == specificProjectIdentifier || project.Name == specificProjectIdentifier {
+						processThisProject = true
+					}
+				}
+
+				if processThisProject {
+					statusWg.Add(1)
+					go func(p discovery.Project) { // Pass project copy to goroutine
+						defer statusWg.Done()
+						statusInfo := runner.GetProjectStatus(p)
+						statusChan <- statusInfo // Send result to status channel
+					}(project) // Pass the project copy
 				}
 			}
-			if !found {
-				errorColor.Fprintf(os.Stderr, "Error: Project '%s' not found in %s.\n", projectName, rootDir)
-				os.Exit(1)
-			}
-		} else {
-			if len(allProjects) == 0 {
-				fmt.Printf("No Podman Compose projects found in %s.\n", rootDir)
-				return
-			}
-			projectsToScan = allProjects // Scan all found projects
-		}
 
-		statusColor.Printf("Checking project status in %s...\n", rootDir)
-		for _, p := range projectsToScan {
-			statusInfo := runner.GetProjectStatus(p.Path)
+			// All projects discovered, wait for status checks to finish, then close statusChan
+			statusWg.Wait()
+			close(statusChan)
+		}()
 
-			fmt.Printf("\nProject: %s ", p.Name)
+		// Process status results as they arrive
+		for statusInfo := range statusChan {
+			s.Stop() // Stop spinner to print status
+
+			fmt.Printf("\nProject: %s (%s) ", statusInfo.Project.Name, identifierColor.Sprint(statusInfo.Project.ServerName))
 			switch statusInfo.OverallStatus {
 			case runner.StatusUp:
 				statusUpColor.Printf("[%s]\n", statusInfo.OverallStatus)
@@ -241,39 +420,68 @@ Otherwise, shows status for all discovered projects.`,
 				statusPartialColor.Printf("[%s]\n", statusInfo.OverallStatus)
 			case runner.StatusError:
 				statusErrorColor.Printf("[%s]\n", statusInfo.OverallStatus)
-				errorColor.Fprintf(os.Stderr, "  Error checking status: %v\n", statusInfo.Error)
-			default:
+				if statusInfo.Error != nil {
+					errorColor.Fprintf(os.Stderr, "  Error checking status: %v\n", statusInfo.Error)
+				} else {
+					errorColor.Fprintf(os.Stderr, "  Unknown error checking status.\n")
+				}
+			default: // StatusUnknown
 				fmt.Printf("[%s]\n", statusInfo.OverallStatus)
 			}
 
+			// Display container details
 			if statusInfo.OverallStatus != runner.StatusDown && len(statusInfo.Containers) > 0 {
 				fmt.Println("  Containers:")
+				fmt.Printf("    %-25s %-35s %s\n", "SERVICE", "CONTAINER NAME", "STATUS")
+				fmt.Printf("    %-25s %-35s %s\n", strings.Repeat("-", 25), strings.Repeat("-", 35), strings.Repeat("-", 6))
 				for _, c := range statusInfo.Containers {
 					isUp := strings.Contains(strings.ToLower(c.Status), "running") || strings.Contains(strings.ToLower(c.Status), "healthy") || strings.HasPrefix(c.Status, "Up")
+					statusPrinter := statusDownColor
 					if isUp {
-						statusUpColor.Printf("  - %s (%s): %s\n", c.Service, c.Name, c.Status)
-					} else {
-						statusDownColor.Printf("  - %s (%s): %s\n", c.Service, c.Name, c.Status)
+						statusPrinter = statusUpColor
 					}
+					fmt.Printf("    %-25s %-35s %s\n", c.Service, c.Name, statusPrinter.Sprint(c.Status))
 				}
 			}
+
+			s.Restart() // Restart spinner after printing
+		}
+		s.Stop() // Stop spinner permanently
+
+		// Wait for error collection goroutine to finish *after* processing all statuses
+		errWg.Wait()
+
+		// Final status messages
+		if !projectsFound && len(collectedErrors) == 0 {
+			fmt.Println("\nNo Podman Compose projects found locally or on configured remote hosts.")
+		} else if !projectsFound && len(collectedErrors) > 0 {
+			fmt.Println("\nNo projects discovered successfully.")
+		} else if !scanAll && !projectsFound { // Specific project requested but not found
+			errorColor.Fprintf(os.Stderr, "\nError: Project '%s' not found.\n", specificProjectIdentifier)
+			os.Exit(1) // Exit non-zero if specific project not found
+		}
+
+		// Exit with non-zero code if any discovery error occurred
+		if len(collectedErrors) > 0 {
+			os.Exit(1)
 		}
 	},
 }
 
-// runSequence executes a series of command steps, streaming output.
-// It now accepts rootDir to correctly construct project paths.
-func runSequence(projectName, rootDir string, sequence []runner.CommandStep) error {
+// runSequence executes a series of command steps for a given project, streaming output.
+func runSequence(project discovery.Project, sequence []runner.CommandStep) error {
 	for _, step := range sequence {
-		stepColor.Printf("\n--- Running Step: %s ---\n", step.Name)
+		// Include project identifier in step message
+		stepColor.Printf("\n--- Running Step: %s for %s (%s) ---\n", step.Name, project.Name, identifierColor.Sprint(project.ServerName))
 
+		// StreamCommand now correctly handles local/remote based on step.Project
 		outChan, errChan := runner.StreamCommand(step)
 
 		var stepErr error
-		outputDone := make(chan struct{})
+		outputDone := make(chan struct{}) // Channel to wait for output goroutine to finish
 
 		go func() {
-			defer close(outputDone)
+			defer close(outputDone) // Signal that this goroutine is done
 			for line := range outChan {
 				if line.IsError {
 					errorColor.Fprintln(os.Stderr, line.Line)
@@ -283,14 +491,15 @@ func runSequence(projectName, rootDir string, sequence []runner.CommandStep) err
 			}
 		}()
 
-		stepErr = <-errChan
-		<-outputDone // Wait for output processing to finish
+		// Wait for the error channel OR the output channel to close (signaling command end)
+		stepErr = <-errChan // Blocks until an error is sent or the channel is closed
+
+		<-outputDone // Wait for the output processing goroutine to finish reading everything
 
 		if stepErr != nil {
-			// Error is already formatted by StreamCommand or the wait logic
 			return fmt.Errorf("step '%s' failed: %w", step.Name, stepErr)
 		}
-		successColor.Printf("--- Step '%s' completed successfully ---\n", step.Name)
+		successColor.Printf("--- Step '%s' completed successfully for %s (%s) ---\n", step.Name, project.Name, identifierColor.Sprint(project.ServerName))
 	}
 	return nil
 }
