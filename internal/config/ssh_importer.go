@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
-package sshconfig
+package config
 
 import (
-	"bucket-manager/internal/config"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -113,24 +112,23 @@ func ParseSSHConfig() ([]PotentialHost, error) {
 
 // ConvertToBucketManagerHost converts a PotentialHost to a config.SSHHost,
 // requiring a unique name and the remote root path.
-func ConvertToBucketManagerHost(p PotentialHost, uniqueName, remoteRoot string) (config.SSHHost, error) {
+func ConvertToBucketManagerHost(p PotentialHost, uniqueName, remoteRoot string) (SSHHost, error) {
 	if !p.IsComplete {
-		return config.SSHHost{}, fmt.Errorf("cannot convert incomplete potential host '%s'", p.Alias)
+		return SSHHost{}, fmt.Errorf("cannot convert incomplete potential host '%s'", p.Alias)
 	}
 	if uniqueName == "" {
-		return config.SSHHost{}, fmt.Errorf("a unique name is required for the bucket-manager host")
+		return SSHHost{}, fmt.Errorf("a unique name is required for the bucket-manager host")
 	}
 	if remoteRoot == "" {
-		return config.SSHHost{}, fmt.Errorf("remote root path is required")
+		return SSHHost{}, fmt.Errorf("remote root path is required")
 	}
 
-	return config.SSHHost{
+	return SSHHost{
 		Name:       uniqueName,
 		Hostname:   p.Hostname,
 		User:       p.User,
 		Port:       p.Port,
 		KeyPath:    p.KeyPath,
 		RemoteRoot: remoteRoot,
-		// Password and Disabled are not typically in ssh_config
 	}, nil
 }

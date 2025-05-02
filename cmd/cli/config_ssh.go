@@ -5,7 +5,6 @@ package cli
 
 import (
 	"bucket-manager/internal/config"
-	"bucket-manager/internal/sshconfig"
 	"bufio"
 	"fmt"
 	"os"
@@ -334,7 +333,7 @@ var sshImportCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		potentialHosts, err := sshconfig.ParseSSHConfig()
+		potentialHosts, err := config.ParseSSHConfig()
 		if err != nil {
 			errorColor.Fprintf(os.Stderr, "Error parsing ~/.ssh/config: %v\n", err)
 			os.Exit(1)
@@ -346,7 +345,7 @@ var sshImportCmd = &cobra.Command{
 		}
 
 		fmt.Println("Found potential hosts in ~/.ssh/config:")
-		importableHosts := []sshconfig.PotentialHost{}
+		importableHosts := []config.PotentialHost{}
 		currentConfigNames := make(map[string]bool)
 		for _, h := range cfg.SSHHosts {
 			currentConfigNames[h.Name] = true
@@ -377,7 +376,7 @@ var sshImportCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		hostsToImport := []sshconfig.PotentialHost{}
+		hostsToImport := []config.PotentialHost{}
 		if strings.ToLower(choiceStr) == "all" {
 			hostsToImport = importableHosts
 		} else {
@@ -429,7 +428,7 @@ var sshImportCmd = &cobra.Command{
 				continue
 			}
 
-			bmHost, err := sshconfig.ConvertToBucketManagerHost(pHost, bmName, remoteRoot)
+			bmHost, err := config.ConvertToBucketManagerHost(pHost, bmName, remoteRoot)
 			if err != nil {
 				errorColor.Fprintf(os.Stderr, "Error converting host '%s': %v. Skipping import.\n", bmName, err)
 				continue

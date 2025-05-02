@@ -7,7 +7,6 @@ import (
 	"bucket-manager/internal/config"
 	"bucket-manager/internal/discovery"
 	"bucket-manager/internal/runner"
-	"bucket-manager/internal/sshconfig"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -189,7 +188,7 @@ var DefaultKeyMap = KeyMap{
 		key.WithHelp("u", "up project(s)"),
 	),
 	DownAction: key.NewBinding(
-		key.WithKeys("d"), // Changed from 'd' in config list
+		key.WithKeys("d"),
 		key.WithHelp("d", "down project(s)"),
 	),
 	RefreshAction: key.NewBinding(
@@ -258,9 +257,9 @@ type model struct {
 	formError      error
 
 	// SSH Config Import State
-	importableHosts    []sshconfig.PotentialHost // Hosts parsed from file, filtered for conflicts
-	selectedImportIdxs map[int]struct{}          // Indices of importableHosts selected by user
-	importCursor       int                       // Cursor for import selection list
+	importableHosts    []config.PotentialHost // Hosts parsed from file, filtered for conflicts
+	selectedImportIdxs map[int]struct{}       // Indices of importableHosts selected by user
+	importCursor       int                    // Cursor for import selection list
 	importError        error                     // Errors during import process (parsing, saving)
 	importInfoMsg      string                    // Informational messages from import (e.g., success, skipped)
 	hostsToConfigure   []config.SSHHost          // Hosts built after gathering details, ready to save
@@ -296,7 +295,7 @@ type sshHostEditedMsg struct { // Used by Edit form
 }
 
 type sshConfigParsedMsg struct { // Used by Import: Step 1 result
-	potentialHosts []sshconfig.PotentialHost
+	potentialHosts []config.PotentialHost
 	err            error
 }
 
@@ -500,8 +499,8 @@ func removeSshHostCmd(hostToRemove config.SSHHost) tea.Cmd {
 // parseSshConfigCmd attempts to parse hosts from the default SSH config file path.
 func parseSshConfigCmd() tea.Cmd {
 	return func() tea.Msg {
-		// sshconfig.ParseSSHConfig already handles default path (~/.ssh/config)
-		potentialHosts, err := sshconfig.ParseSSHConfig()
+		// config.ParseSSHConfig already handles default path (~/.ssh/config)
+		potentialHosts, err := config.ParseSSHConfig()
 		return sshConfigParsedMsg{potentialHosts: potentialHosts, err: err}
 	}
 }
@@ -762,7 +761,7 @@ func createEditForm(host config.SSHHost) ([]textinput.Model, int, bool) {
 
 // createImportDetailsForm initializes the text input fields for the import details form.
 // It pre-fills some fields and determines which auth fields are needed.
-func createImportDetailsForm(pHost sshconfig.PotentialHost) ([]textinput.Model, int) {
+func createImportDetailsForm(pHost config.PotentialHost) ([]textinput.Model, int) {
 	// We only need RemoteRoot, and potentially KeyPath/Password if not in pHost.
 	// Let's reuse the indices from createAddForm for consistency:
 	// 4: RemoteRoot
@@ -1192,7 +1191,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					currentConfigNames[h.Name] = true
 				}
 
-				m.importableHosts = []sshconfig.PotentialHost{}
+				m.importableHosts = []config.PotentialHost{}
 				for _, pHost := range msg.potentialHosts {
 					if _, exists := currentConfigNames[pHost.Alias]; !exists {
 						m.importableHosts = append(m.importableHosts, pHost)
@@ -1721,7 +1720,7 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 			return cmds
 		}
 
-		hostToSave, convertErr := sshconfig.ConvertToBucketManagerHost(currentPotentialHost, currentPotentialHost.Alias, remoteRoot)
+		hostToSave, convertErr := config.ConvertToBucketManagerHost(currentPotentialHost, currentPotentialHost.Alias, remoteRoot)
 		if convertErr != nil {
 			m.formError = fmt.Errorf("internal conversion error: %w", convertErr)
 			return cmds
