@@ -21,7 +21,6 @@ import (
 // This should be initialized by the calling code (CLI/TUI).
 var sshManager *ssh.Manager
 
-// InitSSHManager allows the main application to set the SSH manager instance.
 func InitSSHManager(manager *ssh.Manager) {
 	if sshManager != nil {
 		return
@@ -39,7 +38,6 @@ type Project struct {
 	AbsoluteRemoteRoot string          // The resolved absolute root path on the remote host (empty if local)
 }
 
-// Identifier returns a unique string representation for the project, including its server.
 func (p Project) Identifier() string {
 	return fmt.Sprintf("%s (%s)", p.Name, p.ServerName)
 }
@@ -53,14 +51,11 @@ func GetComposeRootDirectory() (string, error) {
 		// Log config load error but proceed to defaults, as config might not exist
 		fmt.Fprintf(os.Stderr, "Warning: could not load config to check local_root: %v\n", err)
 	} else if cfg.LocalRoot != "" {
-		// Expand ~ if present
-		localRootPath := cfg.LocalRoot
-		if strings.HasPrefix(localRootPath, "~/") {
-			homeDir, homeErr := os.UserHomeDir()
-			if homeErr != nil {
-				return "", fmt.Errorf("could not expand configured local_root path starting with '~': %w", homeErr)
-			}
-			localRootPath = filepath.Join(homeDir, localRootPath[2:])
+		localRootPath, resolveErr := config.ResolvePath(cfg.LocalRoot)
+		if resolveErr != nil {
+			// Log the error but proceed to defaults, as ResolvePath returns original on error
+			fmt.Fprintf(os.Stderr, "Warning: could not resolve configured local_root path '%s': %v\n", cfg.LocalRoot, resolveErr)
+			localRootPath = cfg.LocalRoot // Use original path for Stat check
 		}
 
 		// Check if the configured path exists and is a directory
@@ -78,7 +73,7 @@ func GetComposeRootDirectory() (string, error) {
 
 	}
 
-	// Fallback to default locations (only if LocalRoot was not configured)
+	// Fallback to default locations if LocalRoot was not configured or invalid
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("could not get user home directory for default lookup: %w", err)
@@ -100,7 +95,6 @@ func GetComposeRootDirectory() (string, error) {
 		}
 	}
 
-	// 3. If neither configured nor default found
 	return "", fmt.Errorf("could not find a valid local project root directory (checked config 'local_root' and defaults: ~/bucket, ~/compose-bucket)")
 }
 
@@ -169,11 +163,9 @@ func FindProjects() (<-chan Project, <-chan error, <-chan struct{}) {
 		}
 	}
 
-	// Return channels immediately; collectors will read from them
 	return projectChan, errorChan, doneChan
 }
 
-// findLocalProjects scans a given local root directory for projects.
 func findLocalProjects(rootDir string) ([]Project, error) {
 	var projects []Project
 
@@ -212,7 +204,6 @@ func findLocalProjects(rootDir string) ([]Project, error) {
 	return projects, nil
 }
 
-// findRemoteProjects scans a given remote host's configured root directory using the internal SSH client.
 func findRemoteProjects(hostConfig *config.SSHHost) ([]Project, error) {
 	var projects []Project
 
@@ -274,7 +265,7 @@ func findRemoteProjects(hostConfig *config.SSHHost) ([]Project, error) {
 		return nil, fmt.Errorf("resolved remote root path is empty for '%s' (resolved from '%s') on host %s", absoluteRemoteRoot, targetRemoteRoot, hostConfig.Name)
 	}
 
-	findSession, err := client.NewSession() // Create a new session specifically for the find command
+	findSession, err := client.NewSession()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create second ssh session for discovery on %s: %w", hostConfig.Name, err)
 	}

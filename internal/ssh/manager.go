@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -17,21 +15,17 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 )
 
-// Manager handles persistent SSH connections.
 type Manager struct {
 	clients map[string]*ssh.Client // Map host name (from config.SSHHost.Name) to active client
 	mu      sync.Mutex             // Protects access to the clients map
 }
 
-// NewManager creates a new SSH connection manager.
 func NewManager() *Manager {
 	return &Manager{
 		clients: make(map[string]*ssh.Client),
 	}
 }
 
-// GetClient returns an active SSH client for the given host configuration.
-// It establishes a new connection if one doesn't exist.
 func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 	m.mu.Lock()
 	client, found := m.clients[hostConfig.Name]
@@ -60,7 +54,7 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 	sshConfig := &ssh.ClientConfig{
 		User:            hostConfig.User,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: Implement proper host key verification!
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // Using insecure host key verification for now.
 		Timeout:         10 * time.Second,
 	}
 
@@ -80,7 +74,7 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 	existingClient, found := m.clients[hostConfig.Name]
 	if found {
 		m.mu.Unlock()
-		newClient.Close() // Close the redundant new client
+		newClient.Close()
 		return existingClient, nil
 	}
 	m.clients[hostConfig.Name] = newClient
@@ -89,17 +83,15 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 	return newClient, nil
 }
 
-// getAuthMethods determines the available SSH authentication methods based on config.
 func (m *Manager) getAuthMethods(hostConfig config.SSHHost) ([]ssh.AuthMethod, error) {
 	var methods []ssh.AuthMethod
 
 	if hostConfig.KeyPath != "" {
-		keyPath := hostConfig.KeyPath
-		if strings.HasPrefix(keyPath, "~/") {
-			homeDir, err := os.UserHomeDir()
-			if err == nil { // Ignore error if home dir can't be found
-				keyPath = filepath.Join(homeDir, keyPath[2:])
-			}
+		keyPath, resolveErr := config.ResolvePath(hostConfig.KeyPath)
+		if resolveErr != nil {
+			// Log the error but proceed using the original path
+			fmt.Fprintf(os.Stderr, "Warning: could not resolve key path '%s': %v\n", hostConfig.KeyPath, resolveErr)
+			keyPath = hostConfig.KeyPath // Use original path for ReadFile
 		}
 
 		key, err := os.ReadFile(keyPath)
@@ -107,7 +99,7 @@ func (m *Manager) getAuthMethods(hostConfig config.SSHHost) ([]ssh.AuthMethod, e
 			return nil, fmt.Errorf("failed to read private key file %s: %w", keyPath, err)
 		}
 
-		// TODO: Add support for encrypted keys (passphrase prompt or config)
+		// Currently only supports unencrypted keys.
 		signer, err := ssh.ParsePrivateKey(key)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse private key file %s: %w", keyPath, err)
@@ -131,7 +123,6 @@ func (m *Manager) getAuthMethods(hostConfig config.SSHHost) ([]ssh.AuthMethod, e
 	return methods, nil
 }
 
-// CloseAll closes all active SSH connections managed by the manager.
 func (m *Manager) CloseAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -141,7 +132,6 @@ func (m *Manager) CloseAll() {
 	}
 }
 
-// Close closes a specific connection by host name.
 func (m *Manager) Close(hostName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

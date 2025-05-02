@@ -15,7 +15,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// RunTUI initializes and runs the Bubble Tea TUI application.
 func RunTUI() {
 	if err := config.EnsureConfigDir(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error ensuring config directory: %v\n", err)

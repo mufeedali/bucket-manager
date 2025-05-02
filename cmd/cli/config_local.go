@@ -66,7 +66,6 @@ var configGetLocalRootCmd = &cobra.Command{
 
 		if cfg.LocalRoot != "" {
 			fmt.Printf("Configured local root: %s\n", identifierColor.Sprint(cfg.LocalRoot))
-			// Optionally, we could try resolving it here for user feedback
 			resolvedPath, resolveErr := config.ResolvePath(cfg.LocalRoot)
 			if resolveErr == nil {
 				fmt.Printf("Resolved path:         %s\n", resolvedPath)

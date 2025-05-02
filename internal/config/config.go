@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -15,8 +16,8 @@ import (
 // SSHHost defines the configuration for connecting to a remote host via SSH using the internal client.
 type SSHHost struct {
 	Name       string `yaml:"name"`               // User-friendly identifier (e.g., "server1")
-	Hostname   string `yaml:"hostname"`           // Hostname or IP address
-	User       string `yaml:"user"`               // Username for SSH connection
+	Hostname   string `yaml:"hostname"`
+	User       string `yaml:"user"`
 	Port       int    `yaml:"port,omitempty"`     // Optional SSH port (defaults to 22)
 	KeyPath    string `yaml:"key_path,omitempty"` // Optional path to private key
 	Password   string `yaml:"password,omitempty"` // Optional password (plaintext, discouraged)
@@ -30,7 +31,6 @@ type Config struct {
 	SSHHosts  []SSHHost `yaml:"ssh_hosts"`
 }
 
-// DefaultConfigPath returns the default path for the configuration file.
 func DefaultConfigPath() (string, error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
@@ -62,18 +62,13 @@ func LoadConfig() (Config, error) {
 	}
 
 	// Filter out disabled hosts
-	enabledHosts := []SSHHost{}
-	for _, host := range cfg.SSHHosts {
-		if !host.Disabled {
-			enabledHosts = append(enabledHosts, host)
-		}
-	}
-	cfg.SSHHosts = enabledHosts
+	cfg.SSHHosts = slices.DeleteFunc(cfg.SSHHosts, func(h SSHHost) bool {
+		return h.Disabled
+	})
 
 	return cfg, nil
 }
 
-// EnsureConfigDir ensures the configuration directory exists.
 func EnsureConfigDir() error {
 	configPath, err := DefaultConfigPath()
 	if err != nil {
@@ -87,7 +82,6 @@ func EnsureConfigDir() error {
 	return nil
 }
 
-// SaveConfig saves the provided configuration struct back to the default config file path.
 func SaveConfig(cfg Config) error {
 	configPath, err := DefaultConfigPath()
 	if err != nil {
@@ -112,8 +106,6 @@ func SaveConfig(cfg Config) error {
 
 	return nil
 }
-// ResolvePath expands ~ to the user's home directory for a given path.
-// It returns the original path if it doesn't start with ~/ or if an error occurs.
 func ResolvePath(path string) (string, error) {
 	if !strings.HasPrefix(path, "~/") {
 		// Return unchanged if it's not a tilde path (could be absolute or relative)

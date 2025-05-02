@@ -26,7 +26,6 @@ import (
 // This should be initialized by the calling code (CLI/TUI).
 var sshManager *ssh.Manager
 
-// InitSSHManager allows the main application to set the SSH manager instance.
 func InitSSHManager(manager *ssh.Manager) {
 	if sshManager != nil {
 		return
@@ -182,7 +181,6 @@ func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 	return outChan, errChan
 }
 
-// streamPipe reads from an io.Reader (like stdout/stderr pipe) and sends lines to outChan.
 func streamPipe(pipe io.Reader, outChan chan<- OutputLine, doneChan chan<- struct{}, isError bool, cmdDesc string) {
 	defer func() { doneChan <- struct{}{} }()
 	scanner := bufio.NewScanner(pipe)
@@ -243,7 +241,7 @@ func RefreshSequence(project discovery.Project) []CommandStep {
 			Project: project,
 		},
 	}
-	// Only prune the *local* system if the project is local
+	// Prune local system only if the project is local
 	if !project.IsRemote {
 		steps = append(steps, CommandStep{
 			Name:    "Prune Local System",
@@ -281,7 +279,6 @@ type ProjectRuntimeInfo struct {
 	Error         error
 }
 
-// GetProjectStatus retrieves the status of a project, using internal SSH client if remote.
 func GetProjectStatus(project discovery.Project) ProjectRuntimeInfo {
 	info := ProjectRuntimeInfo{Project: project, OverallStatus: StatusUnknown}
 	cmdDesc := fmt.Sprintf("status check for project %s", project.Identifier())
@@ -331,7 +328,8 @@ func GetProjectStatus(project discovery.Project) ProjectRuntimeInfo {
 		remoteCmdString := strings.Join(remoteCmdParts, " ")
 
 		output, err = session.CombinedOutput(remoteCmdString)
-		stderrStr = string(output)
+		// Note: CombinedOutput includes both stdout and stderr.
+		// We rely on the error check below to see if the command failed.
 
 	} else {
 		cmd := exec.Command("podman", psArgs...)
@@ -345,19 +343,32 @@ func GetProjectStatus(project discovery.Project) ProjectRuntimeInfo {
 		stderrStr = stderrBuf.String()
 	}
 
-	stderrTrimmed := strings.TrimSpace(stderrStr)
+	// Check for errors after execution
 	if err != nil {
-		if strings.Contains(stderrTrimmed, "no containers found") || strings.Contains(stderrTrimmed, "no such file or directory") {
-			info.OverallStatus = StatusDown
-			return info
+		// Check common errors indicating the project is simply down or doesn't exist
+		errMsgLower := strings.ToLower(err.Error())
+		stderrLower := ""
+		if !project.IsRemote { // Only rely on stderrStr if it was explicitly captured locally
+			stderrLower = strings.ToLower(stderrStr)
+		} else { // For remote, check the combined output string as stderr isn't separate
+			stderrLower = strings.ToLower(string(output))
 		}
 
+		if strings.Contains(errMsgLower, "exit status") || // Generic exit error
+			strings.Contains(stderrLower, "no containers found") || // Podman compose message
+			strings.Contains(stderrLower, "no such file or directory") { // If compose file is missing
+			info.OverallStatus = StatusDown
+			return info // Not a failure, just down.
+		}
+
+		// Otherwise, it's a real error
 		info.OverallStatus = StatusError
 		errMsg := fmt.Sprintf("failed to run %s", cmdDesc)
-		if stderrTrimmed != "" {
-			errMsg = fmt.Sprintf("%s: %s", errMsg, stderrTrimmed)
+		// Append stderr from local execution if available and provides context
+		if !project.IsRemote && stderrStr != "" {
+			errMsg = fmt.Sprintf("%s: %s", errMsg, strings.TrimSpace(stderrStr))
 		}
-		info.Error = fmt.Errorf("%s: %w", errMsg, err)
+		info.Error = fmt.Errorf("%s: %w", errMsg, err) // Wrap original error
 		return info
 	}
 
@@ -367,23 +378,45 @@ func GetProjectStatus(project discovery.Project) ProjectRuntimeInfo {
 	}
 
 	var containers []ContainerState
+	var firstUnmarshalError error
+
+	// Process the output line by line, as podman compose ps --format json outputs a stream
 	scanner := bufio.NewScanner(bytes.NewReader(output))
 	for scanner.Scan() {
-		var container ContainerState
-		line := scanner.Bytes()
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
+		lineBytes := scanner.Bytes()
+		if len(bytes.TrimSpace(lineBytes)) == 0 {
+			continue // Skip empty lines
 		}
-		if err := json.Unmarshal(line, &container); err != nil {
-			info.OverallStatus = StatusError
-			info.Error = fmt.Errorf("failed to decode container status JSON line '%s': %w", string(line), err)
-			return info
+
+		var container ContainerState
+		if errUnmarshal := json.Unmarshal(lineBytes, &container); errUnmarshal != nil {
+			// Store the first error encountered, but continue trying to parse other lines
+			if firstUnmarshalError == nil {
+				firstUnmarshalError = fmt.Errorf("failed to decode container status JSON line: %w\nLine: %s", errUnmarshal, string(lineBytes))
+			}
+			continue // Skip lines that fail to parse
 		}
 		containers = append(containers, container)
 	}
-	if err := scanner.Err(); err != nil {
+
+	// Check for scanner errors
+	if errScan := scanner.Err(); errScan != nil {
+		if firstUnmarshalError == nil { // Prioritize unmarshal errors over scan errors
+			firstUnmarshalError = fmt.Errorf("error scanning command output: %w", errScan)
+		}
+	}
+
+	// If any line failed to unmarshal, report the error
+	if firstUnmarshalError != nil {
+		// Check if the error might be the "no containers found" case by examining the raw output
+		outputLower := strings.ToLower(string(output))
+		if strings.Contains(outputLower, "no containers found") {
+			info.OverallStatus = StatusDown
+			return info
+		}
+		// Otherwise, report the parsing error
 		info.OverallStatus = StatusError
-		info.Error = fmt.Errorf("error reading container status output: %w", err)
+		info.Error = firstUnmarshalError // Use the stored first error
 		return info
 	}
 

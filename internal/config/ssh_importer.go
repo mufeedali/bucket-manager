@@ -21,10 +21,8 @@ type PotentialHost struct {
 	User       string
 	Port       int
 	KeyPath    string
-	IsComplete bool // True if Hostname and User are found
 }
 
-// DefaultSSHConfigPath returns the default path for the user's SSH config file.
 func DefaultSSHConfigPath() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -33,8 +31,6 @@ func DefaultSSHConfigPath() (string, error) {
 	return filepath.Join(homeDir, ".ssh", "config"), nil
 }
 
-// ParseSSHConfig reads and parses the user's SSH config file.
-// It returns a list of potential hosts that could be imported.
 func ParseSSHConfig() ([]PotentialHost, error) {
 	sshConfigPath, err := DefaultSSHConfigPath()
 	if err != nil {
@@ -94,15 +90,13 @@ func ParseSSHConfig() ([]PotentialHost, error) {
 		}
 
 		// Only consider hosts where we could determine hostname and user
-		isComplete := hostname != "" && user != ""
-		if isComplete {
+		if hostname != "" && user != "" {
 			potentialHosts = append(potentialHosts, PotentialHost{
 				Alias:      alias,
 				Hostname:   hostname,
 				User:       user,
 				Port:       port,
 				KeyPath:    keyPath,
-				IsComplete: isComplete,
 			})
 		}
 	}
@@ -110,17 +104,13 @@ func ParseSSHConfig() ([]PotentialHost, error) {
 	return potentialHosts, nil
 }
 
-// ConvertToBucketManagerHost converts a PotentialHost to a config.SSHHost,
-// requiring a unique name and the remote root path.
 func ConvertToBucketManagerHost(p PotentialHost, uniqueName, remoteRoot string) (SSHHost, error) {
-	if !p.IsComplete {
-		return SSHHost{}, fmt.Errorf("cannot convert incomplete potential host '%s'", p.Alias)
+	// Basic check if essential fields were parsed (though ParseSSHConfig already filters)
+	if p.Hostname == "" || p.User == "" {
+		return SSHHost{}, fmt.Errorf("cannot convert potential host '%s' with missing hostname or user", p.Alias)
 	}
 	if uniqueName == "" {
 		return SSHHost{}, fmt.Errorf("a unique name is required for the bucket-manager host")
-	}
-	if remoteRoot == "" {
-		return SSHHost{}, fmt.Errorf("remote root path is required")
 	}
 
 	return SSHHost{
