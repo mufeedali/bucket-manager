@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	sshManager         *ssh.Manager // SSH Manager instance
+	sshManager         *ssh.Manager
 	statusColor        = color.New(color.FgCyan)
 	errorColor         = color.New(color.FgRed)
 	stepColor          = color.New(color.FgYellow)
@@ -29,7 +29,7 @@ var (
 	statusDownColor    = color.New(color.FgRed)
 	statusPartialColor = color.New(color.FgYellow)
 	statusErrorColor   = color.New(color.FgMagenta)
-	identifierColor    = color.New(color.FgBlue) // For project identifiers
+	identifierColor    = color.New(color.FgBlue)
 )
 
 // findProjectByIdentifier searches the list of projects for one matching the identifier.
@@ -53,7 +53,7 @@ func findProjectByIdentifier(projects []discovery.Project, identifier string) (d
 	var potentialMatches []discovery.Project
 
 	for i := range projects {
-		p := projects[i] // Create a local copy for the loop iteration
+		p := projects[i]
 		if p.Name == targetName {
 			if targetServer == "" {
 				// No server specified in identifier, add to potential matches
@@ -69,7 +69,7 @@ func findProjectByIdentifier(projects []discovery.Project, identifier string) (d
 	// Post-loop evaluation for cases where server wasn't specified
 	if targetServer == "" {
 		if len(potentialMatches) == 1 {
-			return *foundProject, nil // Exactly one match found
+			return *foundProject, nil
 		}
 		if len(potentialMatches) > 1 {
 			// Ambiguous short name
@@ -167,8 +167,6 @@ func init() {
 	rootCmd.AddCommand(refreshCmd)
 	rootCmd.AddCommand(statusCmd)
 }
-
-// --- Subcommands ---
 
 var listCmd = &cobra.Command{
 	Use:   "list",
@@ -300,7 +298,7 @@ var upCmd = &cobra.Command{
 	Use:               "up <project-identifier>",
 	Short:             "Run 'pull' and 'up -d' for a project",
 	Example:           "  bm up my-local-app\n  bm up 'remote-app (server1)'",
-	Args:              cobra.ExactArgs(1), // Validated in runProjectAction
+	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
 		runProjectAction("up", args)
@@ -311,7 +309,7 @@ var downCmd = &cobra.Command{
 	Use:               "down <project-identifier>",
 	Short:             "Run 'podman compose down' for a project",
 	Example:           "  bm down my-local-app\n  bm down 'remote-app (server1)'",
-	Args:              cobra.ExactArgs(1), // Validated in runProjectAction
+	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
 		runProjectAction("down", args)
@@ -323,14 +321,13 @@ var refreshCmd = &cobra.Command{
 	Short:             "Run 'pull', 'down', 'up', and maybe 'prune' for a project",
 	Long:              `Runs 'pull', 'down', 'up -d' for the specified project. Additionally runs 'podman system prune -af' locally if the target project is local.`,
 	Example:           "  bm refresh my-local-app\n  bm refresh 'remote-app (server1)'",
-	Args:              cobra.ExactArgs(1), // Validated in runProjectAction
+	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
 		runProjectAction("refresh", args)
 	},
 }
 
-// --- statusCmd ---
 var statusCmd = &cobra.Command{
 	Use:   "status [project-identifier]",
 	Short: "Show the status of containers for one or all projects",

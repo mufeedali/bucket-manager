@@ -31,11 +31,12 @@ func InitSSHManager(manager *ssh.Manager) {
 
 // Project represents a discovered Podman Compose project, either local or remote.
 type Project struct {
-	Name       string          // Name of the directory (basename of the path)
-	Path       string          // Full local path OR path relative to remote_root on SSH host
-	ServerName string          // "local" or the Name field from SSHHost config
-	IsRemote   bool            // True if ServerName != "local"
-	HostConfig *config.SSHHost // Pointer to the config for this host (nil if local)
+	Name               string          // Name of the directory (basename of the path)
+	Path               string          // Full local path OR path relative to AbsoluteRemoteRoot on SSH host
+	ServerName         string          // "local" or the Name field from SSHHost config
+	IsRemote           bool            // True if ServerName != "local"
+	HostConfig         *config.SSHHost // Pointer to the config for this host (nil if local)
+	AbsoluteRemoteRoot string          // The resolved absolute root path on the remote host (empty if local)
 }
 
 // Identifier returns a unique string representation for the project, including its server.
@@ -43,12 +44,44 @@ func (p Project) Identifier() string {
 	return fmt.Sprintf("%s (%s)", p.Name, p.ServerName)
 }
 
-// GetComposeRootDirectory finds the root directory for *local* compose projects by checking
-// standard locations within the user's home directory.
+// GetComposeRootDirectory finds the root directory for *local* compose projects.
+// It prioritizes the `local_root` setting in the config file, then checks
+// standard locations (`~/bucket`, `~/compose-bucket`) within the user's home directory.
 func GetComposeRootDirectory() (string, error) {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		// Log config load error but proceed to defaults, as config might not exist
+		fmt.Fprintf(os.Stderr, "Warning: could not load config to check local_root: %v\n", err)
+	} else if cfg.LocalRoot != "" {
+		// Expand ~ if present
+		localRootPath := cfg.LocalRoot
+		if strings.HasPrefix(localRootPath, "~/") {
+			homeDir, homeErr := os.UserHomeDir()
+			if homeErr != nil {
+				return "", fmt.Errorf("could not expand configured local_root path starting with '~': %w", homeErr)
+			}
+			localRootPath = filepath.Join(homeDir, localRootPath[2:])
+		}
+
+		// Check if the configured path exists and is a directory
+		info, statErr := os.Stat(localRootPath)
+		if statErr == nil && info.IsDir() {
+			return localRootPath, nil
+		}
+
+		// If configured path is invalid, return an error. Do not fall back.
+		if statErr != nil {
+			return "", fmt.Errorf("configured local_root '%s' is invalid: %w", cfg.LocalRoot, statErr)
+		}
+		// If stat succeeded but it's not a directory
+		return "", fmt.Errorf("configured local_root '%s' is not a directory", cfg.LocalRoot)
+
+	}
+
+	// Fallback to default locations (only if LocalRoot was not configured)
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("could not get user home directory: %w", err)
+		return "", fmt.Errorf("could not get user home directory for default lookup: %w", err)
 	}
 
 	possibleDirs := []string{
@@ -63,11 +96,12 @@ func GetComposeRootDirectory() (string, error) {
 		}
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			// Log or handle unexpected errors during stat, but continue checking other paths
-			fmt.Fprintf(os.Stderr, "Warning: error checking directory %s: %v\n", dir, err)
+			fmt.Fprintf(os.Stderr, "Warning: error checking default directory %s: %v\n", dir, err)
 		}
 	}
 
-	return "", fmt.Errorf("could not find 'bucket' or 'compose-bucket' directory in home directory (%s)", homeDir)
+	// 3. If neither configured nor default found
+	return "", fmt.Errorf("could not find a valid local project root directory (checked config 'local_root' and defaults: ~/bucket, ~/compose-bucket)")
 }
 
 // FindProjects discovers projects asynchronously, returning channels for results, errors, and completion.
@@ -77,7 +111,6 @@ func FindProjects() (<-chan Project, <-chan error, <-chan struct{}) {
 	doneChan := make(chan struct{})
 	var wg sync.WaitGroup
 
-	// 1. Load Configuration first
 	cfg, configErr := config.LoadConfig()
 	if configErr != nil {
 		// Send config error immediately, but don't block other discovery
@@ -193,31 +226,59 @@ func findRemoteProjects(hostConfig *config.SSHHost) ([]Project, error) {
 		return nil, err
 	}
 
-	session, err := client.NewSession()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create ssh session for discovery on %s: %w", hostConfig.Name, err)
-	}
+	var targetRemoteRoot string
+	var resolveErr error
+	var pwdOutput []byte
 
-	// --- 1. Resolve RemoteRoot path ---
-	resolveCmd := fmt.Sprintf("cd %s && pwd", util.QuoteArgForShell(hostConfig.RemoteRoot))
-	pwdOutput, err := session.CombinedOutput(resolveCmd)
-	if err != nil {
+	if hostConfig.RemoteRoot != "" {
+		targetRemoteRoot = hostConfig.RemoteRoot
+		session, err := client.NewSession()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create ssh session for discovery on %s: %w", hostConfig.Name, err)
+		}
+		resolveCmd := fmt.Sprintf("cd %s && pwd", util.QuoteArgForShell(targetRemoteRoot))
+		pwdOutput, resolveErr = session.CombinedOutput(resolveCmd)
 		session.Close()
-		return nil, fmt.Errorf("failed to resolve remote root path '%s' on host %s: %w\nOutput: %s", hostConfig.RemoteRoot, hostConfig.Name, err, string(pwdOutput))
+		if resolveErr != nil {
+			return nil, fmt.Errorf("failed to resolve configured remote root path '%s' on host %s: %w\nOutput: %s", targetRemoteRoot, hostConfig.Name, resolveErr, string(pwdOutput))
+		}
+	} else {
+		// Configured root is empty, try fallbacks
+		fallbacks := []string{"~/bucket", "~/compose-bucket"}
+		foundFallback := false
+		for _, fallback := range fallbacks {
+			session, err := client.NewSession()
+			if err != nil {
+				// Error creating session is serious, report it
+				return nil, fmt.Errorf("failed to create ssh session for fallback discovery on %s: %w", hostConfig.Name, err)
+			}
+			resolveCmd := fmt.Sprintf("cd %s && pwd", util.QuoteArgForShell(fallback))
+			pwdOutput, resolveErr = session.CombinedOutput(resolveCmd)
+			session.Close()
+
+			if resolveErr == nil {
+				targetRemoteRoot = fallback // Store the successful fallback *name* for potential logging
+				foundFallback = true
+				break
+			}
+		}
+
+		if !foundFallback {
+			return nil, fmt.Errorf("remote_root not configured for host %s, and default fallbacks ('~/bucket', '~/compose-bucket') could not be resolved", hostConfig.Name)
+		}
 	}
-	session.Close()
 
 	absoluteRemoteRoot := strings.TrimSpace(string(pwdOutput))
 	if absoluteRemoteRoot == "" {
-		return nil, fmt.Errorf("resolved remote root path is empty for '%s' on host %s", hostConfig.RemoteRoot, hostConfig.Name)
+		// This should ideally not happen if resolveErr was nil, but check anyway
+		return nil, fmt.Errorf("resolved remote root path is empty for '%s' (resolved from '%s') on host %s", absoluteRemoteRoot, targetRemoteRoot, hostConfig.Name)
 	}
 
-	// --- 2. Find projects relative to the resolved root ---
-	session, err = client.NewSession()
+	findSession, err := client.NewSession() // Create a new session specifically for the find command
 	if err != nil {
 		return nil, fmt.Errorf("failed to create second ssh session for discovery on %s: %w", hostConfig.Name, err)
 	}
-	defer session.Close()
+	defer findSession.Close()
 
 	// Command to find directories containing compose.y*ml one level deep using fd
 	remoteFindCmd := fmt.Sprintf(
@@ -225,7 +286,7 @@ func findRemoteProjects(hostConfig *config.SSHHost) ([]Project, error) {
 		util.QuoteArgForShell(absoluteRemoteRoot),
 	)
 
-	output, err := session.CombinedOutput(remoteFindCmd)
+	output, err := findSession.CombinedOutput(remoteFindCmd)
 	if err != nil {
 		// Include output in error message as it might contain stderr
 		return nil, fmt.Errorf("remote find command failed for host %s: %w\nOutput: %s", hostConfig.Name, err, string(output))
@@ -254,11 +315,12 @@ func findRemoteProjects(hostConfig *config.SSHHost) ([]Project, error) {
 		}
 
 		projects = append(projects, Project{
-			Name:       projectName,
-			Path:       relativePath, // Store the calculated relative path
-			ServerName: hostConfig.Name,
-			IsRemote:   true,
-			HostConfig: hostConfig,
+			Name:               projectName,
+			Path:               relativePath,
+			ServerName:         hostConfig.Name,
+			IsRemote:           true,
+			HostConfig:         hostConfig,
+			AbsoluteRemoteRoot: absoluteRemoteRoot,
 		})
 	}
 	if err := scanner.Err(); err != nil {

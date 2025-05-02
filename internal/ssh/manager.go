@@ -49,7 +49,6 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 	}
 	m.mu.Unlock() // Unlock before potentially long Dial operation
 
-	// --- Establish New Connection ---
 	authMethods, err := m.getAuthMethods(hostConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare auth methods for %s: %w", hostConfig.Name, err)
@@ -94,7 +93,6 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 func (m *Manager) getAuthMethods(hostConfig config.SSHHost) ([]ssh.AuthMethod, error) {
 	var methods []ssh.AuthMethod
 
-	// 1. Priority: Specific Key File
 	if hostConfig.KeyPath != "" {
 		keyPath := hostConfig.KeyPath
 		if strings.HasPrefix(keyPath, "~/") {
@@ -117,7 +115,6 @@ func (m *Manager) getAuthMethods(hostConfig config.SSHHost) ([]ssh.AuthMethod, e
 		methods = append(methods, ssh.PublicKeys(signer))
 	}
 
-	// 2. Fallback: SSH Agent
 	if socket := os.Getenv("SSH_AUTH_SOCK"); socket != "" {
 		conn, err := net.Dial("unix", socket)
 		if err == nil { // Silently ignore agent errors if key/password might work
@@ -127,7 +124,6 @@ func (m *Manager) getAuthMethods(hostConfig config.SSHHost) ([]ssh.AuthMethod, e
 		}
 	}
 
-	// 3. Fallback: Password (if provided)
 	if hostConfig.Password != "" {
 		methods = append(methods, ssh.Password(hostConfig.Password))
 	}

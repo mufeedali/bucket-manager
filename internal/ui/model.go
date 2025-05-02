@@ -57,7 +57,6 @@ const (
 	stateSshConfigEditForm      // State for editing an existing host
 )
 
-// Constants for auth methods
 const (
 	authMethodKey = iota + 1
 	authMethodAgent
@@ -260,13 +259,11 @@ type model struct {
 	importableHosts    []config.PotentialHost // Hosts parsed from file, filtered for conflicts
 	selectedImportIdxs map[int]struct{}       // Indices of importableHosts selected by user
 	importCursor       int                    // Cursor for import selection list
-	importError        error                     // Errors during import process (parsing, saving)
-	importInfoMsg      string                    // Informational messages from import (e.g., success, skipped)
-	hostsToConfigure   []config.SSHHost          // Hosts built after gathering details, ready to save
-	configuringHostIdx int                       // Index of the host currently being configured in Details state
+	importError        error                  // Errors during import process (parsing, saving)
+	importInfoMsg      string                 // Informational messages from import (e.g., success, skipped)
+	hostsToConfigure   []config.SSHHost       // Hosts built after gathering details, ready to save
+	configuringHostIdx int                    // Index of the host currently being configured in Details state
 }
-
-// --- Messages ---
 
 // projectDiscoveredMsg is sent when a single project is found.
 type projectDiscoveredMsg struct {
@@ -316,8 +313,6 @@ type projectStatusLoadedMsg struct {
 	projectIdentifier string
 	statusInfo        runner.ProjectRuntimeInfo
 }
-
-// --- Commands ---
 
 // findProjectsCmd now launches goroutines to read from discovery channels
 // and send incremental messages back to the Update loop via ui.BubbleProgram.
@@ -587,8 +582,6 @@ func waitForErrorCmd(errChan <-chan error) tea.Cmd {
 	}
 }
 
-// --- Model Implementation ---
-
 func InitialModel() model {
 	m := model{
 		keymap:              DefaultKeyMap,
@@ -649,9 +642,9 @@ func createAddForm() []textinput.Model {
 	}
 	inputs[3] = t
 
-	// Remote Root
+	// Remote Root (Optional)
 	t = textinput.New()
-	t.Placeholder = "Remote Root Path (e.g., /home/user/projects)"
+	t.Placeholder = "Remote Root Path (optional, defaults: ~/bucket or ~/compose-bucket)"
 	t.CharLimit = 200
 	t.Width = 60
 	inputs[4] = t
@@ -730,9 +723,9 @@ func createEditForm(host config.SSHHost) ([]textinput.Model, int, bool) {
 	}
 	inputs[3] = t
 
-	// Remote Root
+	// Remote Root (Optional)
 	t = textinput.New()
-	t.Placeholder = "Remote Root Path"
+	t.Placeholder = "Remote Root Path (leave blank for default)"
 	t.SetValue(host.RemoteRoot)
 	t.CharLimit = 200
 	t.Width = 60
@@ -771,9 +764,9 @@ func createImportDetailsForm(pHost config.PotentialHost) ([]textinput.Model, int
 	var t textinput.Model
 	initialAuthMethod := authMethodAgent // Default to agent
 
-	// Remote Root (Index 4)
+	// Remote Root (Index 4, Optional)
 	t = textinput.New()
-	t.Placeholder = "Remote Root Path (e.g., /home/user/projects)"
+	t.Placeholder = "Remote Root Path (optional, defaults: ~/bucket or ~/compose-bucket)"
 	t.Focus()
 	t.CharLimit = 200
 	t.Width = 60
@@ -973,7 +966,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// --- State-Specific Key Handling (if viewport not active or didn't handle) ---
 		switch m.currentState {
 		case stateProjectList:
 			switch {
@@ -1492,7 +1484,6 @@ func (m *model) handleSshAddFormKeys(msg tea.KeyMsg) []tea.Cmd {
 		}
 	}
 
-	// --- Update Focus State ---
 	for i := range m.formInputs {
 		m.formInputs[i].Blur()
 		m.formInputs[i].Prompt = "  "
@@ -1521,8 +1512,6 @@ func (m *model) handleSshAddFormKeys(msg tea.KeyMsg) []tea.Cmd {
 
 	return cmds
 }
-
-// --- Edit Form Navigation Helpers ---
 
 // getEditFormFocusMap returns the sequence of logical focus indices for the Edit form.
 func (m *model) getEditFormFocusMap() []int {
@@ -1629,7 +1618,6 @@ func (m *model) handleSshEditFormKeys(msg tea.KeyMsg) []tea.Cmd {
 		}
 	}
 
-	// --- Update Focus State ---
 	for i := range m.formInputs {
 		m.formInputs[i].Blur()
 		m.formInputs[i].Prompt = "  "
@@ -1711,14 +1699,12 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 		}
 		currentPotentialHost := m.importableHosts[m.configuringHostIdx]
 
-		remoteRoot := strings.TrimSpace(m.formInputs[4].Value())
+		remoteRoot := strings.TrimSpace(m.formInputs[4].Value()) // Optional, can be empty
 		keyPath := strings.TrimSpace(m.formInputs[5].Value())
 		password := m.formInputs[6].Value()
 
-		if remoteRoot == "" {
-			m.formError = fmt.Errorf("remote root path is required")
-			return cmds
-		}
+		// Remote root is optional, no validation needed here.
+		// ConvertToBucketManagerHost will handle the empty string correctly.
 
 		hostToSave, convertErr := config.ConvertToBucketManagerHost(currentPotentialHost, currentPotentialHost.Alias, remoteRoot)
 		if convertErr != nil {
@@ -1769,7 +1755,6 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 		}
 	}
 
-	// --- Update Focus State ---
 	remoteRootIdx := 4
 	keyPathIdx := 5
 	passwordIdx := 6
@@ -1822,10 +1807,7 @@ func (m *model) buildHostFromForm() (config.SSHHost, error) {
 	if host.User == "" {
 		return host, fmt.Errorf("user is required")
 	}
-	host.RemoteRoot = strings.TrimSpace(m.formInputs[4].Value())
-	if host.RemoteRoot == "" {
-		return host, fmt.Errorf("remote root path is required")
-	}
+	host.RemoteRoot = strings.TrimSpace(m.formInputs[4].Value()) // Optional, can be empty
 
 	portStr := strings.TrimSpace(m.formInputs[3].Value())
 	if portStr == "" {
@@ -1909,9 +1891,6 @@ func (m *model) buildHostFromEditForm() (config.SSHHost, error) {
 	}
 	if editedHost.User == "" {
 		return editedHost, fmt.Errorf("user cannot be empty")
-	}
-	if editedHost.RemoteRoot == "" {
-		return editedHost, fmt.Errorf("remote root path cannot be empty")
 	}
 
 	portStr := strings.TrimSpace(m.formInputs[3].Value())
@@ -2227,7 +2206,13 @@ func (m *model) View() string {
 				if host.Disabled {
 					status = errorStyle.Render(" [Disabled]")
 				}
-				bodyContent.WriteString(fmt.Sprintf("%s%s (%s)%s\n", cursor, host.Name, serverNameStyle.Render(details), status))
+				remoteRootStr := ""
+				if host.RemoteRoot != "" {
+					remoteRootStr = fmt.Sprintf(" (Root: %s)", host.RemoteRoot)
+				} else {
+					remoteRootStr = fmt.Sprintf(" (Root: %s)", lipgloss.NewStyle().Faint(true).Render("[Default]"))
+				}
+				bodyContent.WriteString(fmt.Sprintf("%s%s (%s)%s%s\n", cursor, host.Name, serverNameStyle.Render(details), remoteRootStr, status))
 			}
 		}
 		if m.lastError != nil && strings.Contains(m.lastError.Error(), "ssh config") {
@@ -2425,7 +2410,6 @@ func (m *model) View() string {
 		body = bodyContent.String()
 	}
 
-	// --- Footer ---
 	footerContent := strings.Builder{}
 	footerContent.WriteString("\n")
 

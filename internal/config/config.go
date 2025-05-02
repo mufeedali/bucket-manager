@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -19,13 +20,14 @@ type SSHHost struct {
 	Port       int    `yaml:"port,omitempty"`     // Optional SSH port (defaults to 22)
 	KeyPath    string `yaml:"key_path,omitempty"` // Optional path to private key
 	Password   string `yaml:"password,omitempty"` // Optional password (plaintext, discouraged)
-	RemoteRoot string `yaml:"remote_root"`        // Root directory for projects on the remote host
+	RemoteRoot string `yaml:"remote_root,omitempty"` // Optional root directory for projects on the remote host (defaults to ~/bucket or ~/compose-bucket)
 	Disabled   bool   `yaml:"disabled,omitempty"` // Optional flag to disable this host
 }
 
-// Config holds the overall application configuration, including SSH hosts.
+// Config holds the overall application configuration, including SSH hosts and local settings.
 type Config struct {
-	SSHHosts []SSHHost `yaml:"ssh_hosts"`
+	LocalRoot string    `yaml:"local_root,omitempty"` // Optional custom root directory for local projects
+	SSHHosts  []SSHHost `yaml:"ssh_hosts"`
 }
 
 // DefaultConfigPath returns the default path for the configuration file.
@@ -109,4 +111,19 @@ func SaveConfig(cfg Config) error {
 	}
 
 	return nil
+}
+// ResolvePath expands ~ to the user's home directory for a given path.
+// It returns the original path if it doesn't start with ~/ or if an error occurs.
+func ResolvePath(path string) (string, error) {
+	if !strings.HasPrefix(path, "~/") {
+		// Return unchanged if it's not a tilde path (could be absolute or relative)
+		return path, nil
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return path, fmt.Errorf("could not get user home directory to resolve path '%s': %w", path, err)
+	}
+
+	return filepath.Join(homeDir, path[2:]), nil
 }

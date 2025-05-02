@@ -60,7 +60,6 @@ func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 		cmdDesc := fmt.Sprintf("step '%s' for project %s", step.Name, step.Project.Identifier())
 
 		if step.Project.IsRemote {
-			// --- Remote Execution via Internal SSH Client ---
 			if sshManager == nil {
 				errChan <- fmt.Errorf("ssh manager not initialized")
 				return
@@ -94,8 +93,13 @@ func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 				return
 			}
 
-			// Construct the remote command string (cd && command args...)
-			remoteCmdParts := []string{"cd", util.QuoteArgForShell(filepath.Join(step.Project.HostConfig.RemoteRoot, step.Project.Path)), "&&", step.Command}
+			// Construct the remote command string (cd /resolved/absolute/root/relative/path && command args...)
+			if step.Project.AbsoluteRemoteRoot == "" {
+				errChan <- fmt.Errorf("internal error: AbsoluteRemoteRoot is empty for remote project %s", step.Project.Identifier())
+				return
+			}
+			remoteProjectPath := filepath.Join(step.Project.AbsoluteRemoteRoot, step.Project.Path)
+			remoteCmdParts := []string{"cd", util.QuoteArgForShell(remoteProjectPath), "&&", step.Command}
 			for _, arg := range step.Args {
 				remoteCmdParts = append(remoteCmdParts, util.QuoteArgForShell(arg))
 			}
@@ -129,7 +133,6 @@ func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 			}
 
 		} else {
-			// --- Local Execution (using os/exec) ---
 			cmd := exec.Command(step.Command, step.Args...)
 			cmd.Dir = step.Project.Path
 			localCmdDesc := fmt.Sprintf("local %s", cmdDesc)
@@ -190,8 +193,6 @@ func streamPipe(pipe io.Reader, outChan chan<- OutputLine, doneChan chan<- struc
 		fmt.Fprintf(io.Discard, "%s pipe scanner error for %s: %v\n", map[bool]string{false: "stdout", true: "stderr"}[isError], cmdDesc, err)
 	}
 }
-
-// --- Command Sequences ---
 
 func UpSequence(project discovery.Project) []CommandStep {
 	return []CommandStep{
@@ -254,8 +255,6 @@ func RefreshSequence(project discovery.Project) []CommandStep {
 	return steps
 }
 
-// --- Status Logic ---
-
 type ProjectStatus string
 
 const (
@@ -293,7 +292,6 @@ func GetProjectStatus(project discovery.Project) ProjectRuntimeInfo {
 	var stderrStr string
 
 	if project.IsRemote {
-		// --- Remote Status via Internal SSH Client ---
 		if sshManager == nil {
 			info.OverallStatus = StatusError
 			info.Error = fmt.Errorf("ssh manager not initialized for %s", cmdDesc)
@@ -320,7 +318,13 @@ func GetProjectStatus(project discovery.Project) ProjectRuntimeInfo {
 		}
 		defer session.Close()
 
-		remoteCmdParts := []string{"cd", util.QuoteArgForShell(filepath.Join(project.HostConfig.RemoteRoot, project.Path)), "&&", "podman"}
+		if project.AbsoluteRemoteRoot == "" {
+			info.OverallStatus = StatusError
+			info.Error = fmt.Errorf("internal error: AbsoluteRemoteRoot is empty for remote project %s", project.Identifier())
+			return info
+		}
+		remoteProjectPath := filepath.Join(project.AbsoluteRemoteRoot, project.Path)
+		remoteCmdParts := []string{"cd", util.QuoteArgForShell(remoteProjectPath), "&&", "podman"}
 		for _, arg := range psArgs {
 			remoteCmdParts = append(remoteCmdParts, util.QuoteArgForShell(arg))
 		}
@@ -330,7 +334,6 @@ func GetProjectStatus(project discovery.Project) ProjectRuntimeInfo {
 		stderrStr = string(output)
 
 	} else {
-		// --- Local Status (using os/exec) ---
 		cmd := exec.Command("podman", psArgs...)
 		cmd.Dir = project.Path
 		var stdoutBuf, stderrBuf bytes.Buffer
@@ -342,7 +345,6 @@ func GetProjectStatus(project discovery.Project) ProjectRuntimeInfo {
 		stderrStr = stderrBuf.String()
 	}
 
-	// --- Process Results (Common for Local and Remote) ---
 	stderrTrimmed := strings.TrimSpace(stderrStr)
 	if err != nil {
 		if strings.Contains(stderrTrimmed, "no containers found") || strings.Contains(stderrTrimmed, "no such file or directory") {
