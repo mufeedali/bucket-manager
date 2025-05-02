@@ -19,6 +19,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const (
+	headerHeight = 2 // Lines for title + blank line
+)
+
 // BubbleProgram is a package-level variable to hold the program instance.
 // This is needed so background goroutines can send messages.
 // It's assigned in cmd/tui/main.go before the program runs.
@@ -918,15 +922,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		headerHeight := 2
-		footerHeight := 2
+
+		// Only update width and initialize here. Height is set dynamically in View.
 		if !m.ready {
-			m.viewport = viewport.New(m.width, m.height-headerHeight-footerHeight)
+			// Initialize viewport on first size message
+			m.viewport = viewport.New(m.width, 1) // Initial height doesn't matter much
 			m.ready = true
 		} else {
+			// Update viewport width on subsequent size messages
 			m.viewport.Width = m.width
-			m.viewport.Height = m.height - headerHeight - footerHeight
 		}
+
+		// Ensure content is updated if viewport is active (content might affect height)
 		if m.currentState == stateRunningSequence || m.currentState == stateSequenceError {
 			m.viewport.SetContent(m.outputContent)
 		}
@@ -2090,14 +2097,183 @@ func (m *model) View() string {
 	header = titleStyle.Render("Bucket Manager TUI") + "\n"
 	bodyContent := strings.Builder{}
 
-	headerHeight := 2
-	footerHeight := 2
-	newViewportHeight := m.height - headerHeight - footerHeight
-	if newViewportHeight < 1 {
-		newViewportHeight = 1
-	}
-	m.viewport.Height = newViewportHeight
+	// --- Calculate Footer First ---
+	footerContent := strings.Builder{}
+	footerContent.WriteString("\n") // Initial blank line
 
+	switch m.currentState {
+	case stateProjectList:
+		if m.isDiscovering {
+			footerContent.WriteString(statusLoadingStyle.Render("Discovering remote projects...") + "\n")
+		}
+		if len(m.discoveryErrors) > 0 {
+			footerContent.WriteString(errorStyle.Render("Discovery Errors:"))
+			for _, err := range m.discoveryErrors {
+				footerContent.WriteString("\n  " + errorStyle.Render(err.Error()))
+			}
+			footerContent.WriteString("\n")
+		} else if m.lastError != nil && strings.Contains(m.lastError.Error(), "discovery") {
+			footerContent.WriteString(errorStyle.Render(fmt.Sprintf("Discovery Warning: %v", m.lastError)) + "\n")
+		}
+
+		help := strings.Builder{}
+		if len(m.selectedProjectIdxs) > 0 {
+			help.WriteString(fmt.Sprintf("(%d selected) ", len(m.selectedProjectIdxs)))
+		}
+		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + ": navigate | ")
+		help.WriteString(m.keymap.Select.Help().Key + ": " + m.keymap.Select.Help().Desc + " | ")
+		help.WriteString(m.keymap.Enter.Help().Key + ": details | ")
+		help.WriteString(m.keymap.UpAction.Help().Key + ": up | ")
+		help.WriteString(m.keymap.DownAction.Help().Key + ": down | ")
+		help.WriteString(m.keymap.RefreshAction.Help().Key + ": refresh")
+		help.WriteString(" | ")
+		help.WriteString(m.keymap.Config.Help().Key + ": " + m.keymap.Config.Help().Desc + " | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
+	case stateRunningSequence:
+		projectIdentifier := ""
+		if m.sequenceProject != nil {
+			projectIdentifier = fmt.Sprintf(" for %s", m.sequenceProject.Identifier())
+		}
+		if m.currentSequence != nil && m.currentStepIndex < len(m.currentSequence) {
+			footerContent.WriteString(statusStyle.Render(fmt.Sprintf("Running step %d/%d%s: %s...", m.currentStepIndex+1, len(m.currentSequence), projectIdentifier, m.currentSequence[m.currentStepIndex].Name)))
+		} else if m.sequenceProject != nil {
+			footerContent.WriteString(successStyle.Render(fmt.Sprintf("Sequence finished successfully%s.", projectIdentifier)))
+		} else {
+			footerContent.WriteString(successStyle.Render("Sequence finished successfully."))
+		}
+		help := strings.Builder{}
+		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.PgUp.Help().Key + "/" + m.keymap.PgDown.Help().Key + ": scroll | ")
+		help.WriteString(m.keymap.Back.Help().Key + "/" + m.keymap.Enter.Help().Key + ": back to list | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
+	case stateSequenceError:
+		projectIdentifier := ""
+		if m.sequenceProject != nil {
+			projectIdentifier = fmt.Sprintf(" for %s", m.sequenceProject.Identifier())
+		}
+		if m.lastError != nil {
+			footerContent.WriteString(errorStyle.Render(fmt.Sprintf("Error%s: %v", projectIdentifier, m.lastError)))
+		} else {
+			footerContent.WriteString(errorStyle.Render(fmt.Sprintf("An unknown error occurred%s.", projectIdentifier)))
+		}
+		help := strings.Builder{}
+		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.PgUp.Help().Key + "/" + m.keymap.PgDown.Help().Key + ": scroll | ")
+		help.WriteString(m.keymap.Back.Help().Key + "/" + m.keymap.Enter.Help().Key + ": back to list | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
+	case stateProjectDetails:
+		help := strings.Builder{}
+		help.WriteString(m.keymap.Back.Help().Key + ": back to list | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
+	case stateSshConfigList:
+		help := strings.Builder{}
+		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + ": navigate | ")
+		help.WriteString(m.keymap.Add.Help().Key + ": " + m.keymap.Add.Help().Desc + " | ")
+		help.WriteString(m.keymap.Edit.Help().Key + ": " + m.keymap.Edit.Help().Desc + " | ")
+		help.WriteString(m.keymap.Remove.Help().Key + ": " + m.keymap.Remove.Help().Desc + " | ")
+		help.WriteString(m.keymap.Import.Help().Key + ": " + m.keymap.Import.Help().Desc + " | ")
+		help.WriteString(m.keymap.Back.Help().Key + ": back | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+
+		errorOrInfo := ""
+		if m.importInfoMsg != "" {
+			errorOrInfo = "\n" + successStyle.Render(m.importInfoMsg)
+		} else if m.importError != nil {
+			errorOrInfo = "\n" + errorStyle.Render(fmt.Sprintf("Import Error: %v", m.importError))
+		} else if m.lastError != nil && strings.Contains(m.lastError.Error(), "ssh config") {
+			errorOrInfo = "\n" + errorStyle.Render(fmt.Sprintf("Config Error: %v", m.lastError))
+		}
+
+		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+		if errorOrInfo != "" {
+			footerContent.WriteString(errorOrInfo)
+		}
+
+	case stateSshConfigRemoveConfirm:
+		help := strings.Builder{}
+		if m.hostToRemove != nil {
+			help.WriteString(fmt.Sprintf("Confirm removal of '%s'? ", identifierColor.Render(m.hostToRemove.Name)))
+			help.WriteString(m.keymap.Yes.Help().Key + ": " + m.keymap.Yes.Help().Desc + " | ")
+			help.WriteString(m.keymap.No.Help().Key + "/" + m.keymap.Back.Help().Key + ": " + m.keymap.No.Help().Desc + "/cancel")
+		} else {
+			help.WriteString(errorStyle.Render("Error - no host selected. "))
+			help.WriteString(m.keymap.Back.Help().Key + ": back")
+		}
+		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
+	case stateSshConfigAddForm, stateSshConfigEditForm:
+		if m.formError != nil {
+			footerContent.WriteString("\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.formError)))
+		}
+		help := strings.Builder{}
+		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.Tab.Help().Key + "/" + m.keymap.ShiftTab.Help().Key + ": navigate | ")
+		if m.currentState == stateSshConfigAddForm || m.currentState == stateSshConfigEditForm {
+			help.WriteString(m.keymap.Left.Help().Key + "/" + m.keymap.Right.Help().Key + ": change auth | ")
+		}
+		if m.currentState == stateSshConfigEditForm {
+			help.WriteString(m.keymap.ToggleDisabled.Help().Key + ": " + m.keymap.ToggleDisabled.Help().Desc + " | ")
+		}
+		help.WriteString(m.keymap.Enter.Help().Key + ": save | ")
+		help.WriteString(m.keymap.Esc.Help().Key + ": " + m.keymap.Esc.Help().Desc + " | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
+	case stateSshConfigImportSelect:
+		help := strings.Builder{}
+		if len(m.selectedImportIdxs) > 0 {
+			help.WriteString(fmt.Sprintf(" (%d selected)", len(m.selectedImportIdxs)))
+		}
+		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + ": navigate | ")
+		help.WriteString(m.keymap.Select.Help().Key + ": " + m.keymap.Select.Help().Desc + " | ")
+		help.WriteString(m.keymap.Enter.Help().Key + ": confirm")
+		help.WriteString(" | " + m.keymap.Back.Help().Key + ": cancel | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
+	case stateSshConfigImportDetails:
+		remaining := 0
+		for i := m.configuringHostIdx + 1; i < len(m.importableHosts); i++ {
+			if _, ok := m.selectedImportIdxs[i]; ok {
+				remaining++
+			}
+		}
+		hostLabel := "host"
+		if remaining != 1 {
+			hostLabel = "hosts"
+		}
+		if m.formError != nil {
+			footerContent.WriteString("\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.formError)))
+		}
+		help := strings.Builder{}
+		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.Tab.Help().Key + "/" + m.keymap.ShiftTab.Help().Key + ": navigate | ")
+		help.WriteString(m.keymap.Left.Help().Key + "/" + m.keymap.Right.Help().Key + ": change auth | ")
+		help.WriteString(fmt.Sprintf("%s: confirm & next (%d %s remaining) | ", m.keymap.Enter.Help().Key, remaining, hostLabel))
+		help.WriteString(m.keymap.Esc.Help().Key + ": cancel import | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
+	default: // Loading projects state
+		help := strings.Builder{}
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+	}
+	footer = footerContent.String()
+	actualFooterHeight := lipgloss.Height(footer)
+
+	// --- Calculate Body Height & Set Viewport ---
+	availableHeight := m.height - headerHeight - actualFooterHeight
+	if availableHeight < 1 {
+		availableHeight = 1
+	}
+	m.viewport.Height = availableHeight
+
+	// --- Render Body Content ---
 	switch m.currentState {
 	case stateLoadingProjects:
 		bodyContent.WriteString(statusStyle.Render("Loading projects..."))
@@ -2403,189 +2579,14 @@ func (m *model) View() string {
 				bodyContent.WriteString("\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.formError)))
 			}
 		}
-	}
+	} // End of body rendering switch
 
 	// Use bodyContent only if body wasn't set by viewport
 	if body == "" {
 		body = bodyContent.String()
 	}
 
-	footerContent := strings.Builder{}
-	footerContent.WriteString("\n")
-
-	switch m.currentState {
-	case stateProjectList:
-		hasDiscoveryMessage := false
-		if m.isDiscovering {
-			footerContent.WriteString(statusLoadingStyle.Render("Discovering remote projects...") + "\n")
-			hasDiscoveryMessage = true
-		}
-		hasErrors := false
-		if len(m.discoveryErrors) > 0 {
-			footerContent.WriteString(errorStyle.Render("Discovery Errors:"))
-			for _, err := range m.discoveryErrors {
-				footerContent.WriteString("\n  " + errorStyle.Render(err.Error()))
-			}
-			footerContent.WriteString("\n") // Add separator before keys
-			hasErrors = true
-		} else if m.lastError != nil && strings.Contains(m.lastError.Error(), "discovery") {
-			footerContent.WriteString(errorStyle.Render(fmt.Sprintf("Discovery Warning: %v", m.lastError)) + "\n")
-			hasErrors = true
-		}
-
-		if !hasDiscoveryMessage && !hasErrors {
-			footerContent.WriteString("\n")
-		}
-
-		help := strings.Builder{}
-		if len(m.selectedProjectIdxs) > 0 {
-			help.WriteString(fmt.Sprintf("(%d selected) ", len(m.selectedProjectIdxs)))
-		}
-		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + ": navigate | ")
-		help.WriteString(m.keymap.Select.Help().Key + ": " + m.keymap.Select.Help().Desc + " | ")
-		help.WriteString(m.keymap.Enter.Help().Key + ": details | ")
-		help.WriteString(m.keymap.UpAction.Help().Key + ": up | ")
-		help.WriteString(m.keymap.DownAction.Help().Key + ": down | ")
-		help.WriteString(m.keymap.RefreshAction.Help().Key + ": refresh")
-		help.WriteString(" | ")
-		help.WriteString(m.keymap.Config.Help().Key + ": " + m.keymap.Config.Help().Desc + " | ")
-		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
-
-	case stateRunningSequence:
-		projectIdentifier := ""
-		if m.sequenceProject != nil {
-			projectIdentifier = fmt.Sprintf(" for %s", m.sequenceProject.Identifier())
-		}
-		if m.currentSequence != nil && m.currentStepIndex < len(m.currentSequence) {
-			footerContent.WriteString(statusStyle.Render(fmt.Sprintf("Running step %d/%d%s: %s...", m.currentStepIndex+1, len(m.currentSequence), projectIdentifier, m.currentSequence[m.currentStepIndex].Name)))
-		} else if m.sequenceProject != nil {
-			footerContent.WriteString(successStyle.Render(fmt.Sprintf("Sequence finished successfully%s.", projectIdentifier)))
-		} else {
-			footerContent.WriteString(successStyle.Render("Sequence finished successfully."))
-		}
-		help := strings.Builder{}
-		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.PgUp.Help().Key + "/" + m.keymap.PgDown.Help().Key + ": scroll | ")
-		help.WriteString(m.keymap.Back.Help().Key + "/" + m.keymap.Enter.Help().Key + ": back to list | ")
-		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-		footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
-
-	case stateSequenceError:
-		projectIdentifier := ""
-		if m.sequenceProject != nil {
-			projectIdentifier = fmt.Sprintf(" for %s", m.sequenceProject.Identifier())
-		}
-		if m.lastError != nil {
-			footerContent.WriteString(errorStyle.Render(fmt.Sprintf("Error%s: %v", projectIdentifier, m.lastError)))
-		} else {
-			footerContent.WriteString(errorStyle.Render(fmt.Sprintf("An unknown error occurred%s.", projectIdentifier)))
-		}
-		help := strings.Builder{}
-		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.PgUp.Help().Key + "/" + m.keymap.PgDown.Help().Key + ": scroll | ")
-		help.WriteString(m.keymap.Back.Help().Key + "/" + m.keymap.Enter.Help().Key + ": back to list | ")
-		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-		footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
-
-	case stateProjectDetails:
-		help := strings.Builder{}
-		help.WriteString(m.keymap.Back.Help().Key + ": back to list | ")
-		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
-
-	case stateSshConfigList:
-		help := strings.Builder{}
-		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + ": navigate | ")
-		help.WriteString(m.keymap.Add.Help().Key + ": " + m.keymap.Add.Help().Desc + " | ")
-		help.WriteString(m.keymap.Edit.Help().Key + ": " + m.keymap.Edit.Help().Desc + " | ")
-		help.WriteString(m.keymap.Remove.Help().Key + ": " + m.keymap.Remove.Help().Desc + " | ")
-		help.WriteString(m.keymap.Import.Help().Key + ": " + m.keymap.Import.Help().Desc + " | ")
-		help.WriteString(m.keymap.Back.Help().Key + ": back | ")
-		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-
-		errorOrInfo := ""
-		if m.importInfoMsg != "" {
-			errorOrInfo = "\n" + successStyle.Render(m.importInfoMsg)
-		} else if m.importError != nil {
-			errorOrInfo = "\n" + errorStyle.Render(fmt.Sprintf("Import Error: %v", m.importError))
-		} else if m.lastError != nil && strings.Contains(m.lastError.Error(), "ssh config") {
-			errorOrInfo = "\n" + errorStyle.Render(fmt.Sprintf("Config Error: %v", m.lastError))
-		}
-
-		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
-		if errorOrInfo != "" {
-			footerContent.WriteString(errorOrInfo)
-		}
-
-	case stateSshConfigRemoveConfirm:
-		help := strings.Builder{}
-		if m.hostToRemove != nil {
-			help.WriteString(fmt.Sprintf("Confirm removal of '%s'? ", identifierColor.Render(m.hostToRemove.Name)))
-			help.WriteString(m.keymap.Yes.Help().Key + ": " + m.keymap.Yes.Help().Desc + " | ")
-			help.WriteString(m.keymap.No.Help().Key + "/" + m.keymap.Back.Help().Key + ": " + m.keymap.No.Help().Desc + "/cancel")
-		} else {
-			help.WriteString(errorStyle.Render("Error - no host selected. "))
-			help.WriteString(m.keymap.Back.Help().Key + ": back")
-		}
-		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
-
-	case stateSshConfigAddForm, stateSshConfigEditForm:
-		if m.formError != nil {
-			footerContent.WriteString("\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.formError)))
-		}
-		help := strings.Builder{}
-		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.Tab.Help().Key + "/" + m.keymap.ShiftTab.Help().Key + ": navigate | ")
-		if m.currentState == stateSshConfigAddForm || m.currentState == stateSshConfigEditForm {
-			help.WriteString(m.keymap.Left.Help().Key + "/" + m.keymap.Right.Help().Key + ": change auth | ")
-		}
-		if m.currentState == stateSshConfigEditForm {
-			help.WriteString(m.keymap.ToggleDisabled.Help().Key + ": " + m.keymap.ToggleDisabled.Help().Desc + " | ")
-		}
-		help.WriteString(m.keymap.Enter.Help().Key + ": save | ")
-		help.WriteString(m.keymap.Esc.Help().Key + ": " + m.keymap.Esc.Help().Desc + " | ")
-		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-		footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
-
-	case stateSshConfigImportSelect:
-		help := strings.Builder{}
-		if len(m.selectedImportIdxs) > 0 {
-			help.WriteString(fmt.Sprintf(" (%d selected)", len(m.selectedImportIdxs)))
-		}
-		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + ": navigate | ")
-		help.WriteString(m.keymap.Select.Help().Key + ": " + m.keymap.Select.Help().Desc + " | ")
-		help.WriteString(m.keymap.Enter.Help().Key + ": confirm")
-		help.WriteString(" | " + m.keymap.Back.Help().Key + ": cancel | ")
-		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
-
-	case stateSshConfigImportDetails:
-		remaining := 0
-		for i := m.configuringHostIdx + 1; i < len(m.importableHosts); i++ {
-			if _, ok := m.selectedImportIdxs[i]; ok {
-				remaining++
-			}
-		}
-		hostLabel := "host"
-		if remaining != 1 {
-			hostLabel = "hosts"
-		}
-		if m.formError != nil {
-			footerContent.WriteString("\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.formError)))
-		}
-		help := strings.Builder{}
-		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.Tab.Help().Key + "/" + m.keymap.ShiftTab.Help().Key + ": navigate | ")
-		help.WriteString(m.keymap.Left.Help().Key + "/" + m.keymap.Right.Help().Key + ": change auth | ")
-		help.WriteString(fmt.Sprintf("%s: confirm & next (%d %s remaining) | ", m.keymap.Enter.Help().Key, remaining, hostLabel))
-		help.WriteString(m.keymap.Esc.Help().Key + ": cancel import | ")
-		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-		footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
-
-	default: // Loading projects state
-		help := strings.Builder{}
-		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
-	}
-	footer = footerContent.String()
-
+	// --- Render Final View ---
 	finalView := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 	return finalView
 }
