@@ -32,18 +32,19 @@ var (
 	identifierColor    = color.New(color.FgBlue)
 )
 
-// Identifier can be "projectName" (implies local preference) or "projectName@serverName".
+// Identifier can be "projectName" (implies local preference) or "serverName:projectName".
 // Returns an error if not found or if "projectName" is ambiguous.
 func findProjectByIdentifier(projects []discovery.Project, identifier string) (discovery.Project, error) {
 	identifier = strings.TrimSpace(identifier)
 	targetName := identifier
 	targetServer := "" // Empty means user didn't specify, implies local preference unless ambiguous
 
-	if parts := strings.SplitN(identifier, "@", 2); len(parts) == 2 {
-		targetName = strings.TrimSpace(parts[0])
-		targetServer = strings.TrimSpace(parts[1])
+	if parts := strings.SplitN(identifier, ":", 2); len(parts) == 2 {
+		targetServer = strings.TrimSpace(parts[0])
+		targetName = strings.TrimSpace(parts[1])
 		if targetName == "" || targetServer == "" {
-			return discovery.Project{}, fmt.Errorf("invalid identifier format: '%s'", identifier)
+			// Allow "remote:" format for status command later, but not here for finding a *specific* project
+			return discovery.Project{}, fmt.Errorf("invalid identifier format: '%s'. Use 'project' or 'remote:project'", identifier)
 		}
 	}
 
@@ -54,7 +55,7 @@ func findProjectByIdentifier(projects []discovery.Project, identifier string) (d
 	for i := range projects {
 		p := projects[i]
 		if p.Name == targetName {
-			if targetServer != "" { // User specified a server (e.g., project@server or project@local)
+			if targetServer != "" { // User specified a server (e.g., server:project or local:project)
 				if p.ServerName == targetServer {
 					exactMatch = &p
 					break
@@ -65,15 +66,14 @@ func findProjectByIdentifier(projects []discovery.Project, identifier string) (d
 		}
 	}
 
-	if targetServer != "" { // User specified a server
+	if targetServer != "" {
 		if exactMatch != nil {
 			return *exactMatch, nil
 		}
 		// If exact match wasn't found, but server was specified, it's simply not found
-		return discovery.Project{}, fmt.Errorf("project '%s@%s' not found", targetName, targetServer)
+		return discovery.Project{}, fmt.Errorf("project '%s:%s' not found", targetServer, targetName)
 	}
 
-	// User did *not* specify a server
 	if len(potentialMatches) == 0 {
 		return discovery.Project{}, fmt.Errorf("project '%s' not found", targetName)
 	}
@@ -145,11 +145,10 @@ func projectCompletionFunc(cmd *cobra.Command, args []string, toComplete string)
 	var projectIdentifiers []string
 	for _, p := range projects {
 		identifier := p.Identifier()
-		// Only suggest projects that start with the currently typed string
 		if strings.HasPrefix(identifier, toComplete) {
 			projectIdentifiers = append(projectIdentifiers, identifier)
-		} else if !p.IsRemote && strings.HasPrefix(p.Name, toComplete) && !strings.Contains(toComplete, "@") {
-			// Also suggest implicit local name if user hasn't typed '@'
+		} else if !p.IsRemote && strings.HasPrefix(p.Name, toComplete) && !strings.Contains(toComplete, ":") {
+			// Also suggest implicit local name if user hasn't typed ':'
 			projectIdentifiers = append(projectIdentifiers, p.Name)
 		}
 	}
@@ -160,9 +159,9 @@ func projectCompletionFunc(cmd *cobra.Command, args []string, toComplete string)
 var rootCmd = &cobra.Command{
 	Use:   "bm",
 	Short: "Bucket Manager CLI",
-	Long: `A command-line interface to manage multiple Podman Compose projects.
+	Long: `A command-line interface to manage multiple Podman Compose stacks.
 
-Discovers projects in standard local directories (~/bucket, ~/compose-bucket)
+Discovers stacks in standard local directories (~/bucket, ~/compose-bucket)
 and on remote hosts configured via SSH (~/.config/bucket-manager/config.yaml).`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := config.EnsureConfigDir(); err != nil {
@@ -198,13 +197,13 @@ func init() {
 
 var listCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List discovered Podman Compose projects (local and remote)",
+	Short: "List discovered Podman Compose stacks (local and remote)",
 	Run: func(cmd *cobra.Command, args []string) {
-		statusColor.Println("Discovering projects...")
+		statusColor.Println("Discovering stacks...")
 		projectChan, errorChan, _ := discovery.FindProjects()
 
 		var collectedErrors []error
-		var projectsFound bool
+		var stacksFound bool
 		var wg sync.WaitGroup
 		wg.Add(1)
 
@@ -217,27 +216,27 @@ var listCmd = &cobra.Command{
 			}
 		}()
 
-		fmt.Println("\nDiscovered projects:")
+		fmt.Println("\nDiscovered stacks:")
 
 		s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
 		s.Color("cyan")
-		s.Suffix = " Loading remote projects..."
+		s.Suffix = " Loading remote stacks..."
 		s.Start()
 
-		for project := range projectChan {
+		for stack := range projectChan {
 			s.Stop()
-			projectsFound = true
-			fmt.Printf("- %s (%s)\n", project.Name, identifierColor.Sprint(project.ServerName))
+			stacksFound = true
+			fmt.Printf("- %s (%s)\n", stack.Name, identifierColor.Sprint(stack.ServerName))
 			s.Restart()
 		}
 		s.Stop()
 
 		wg.Wait()
 
-		if !projectsFound && len(collectedErrors) == 0 {
-			fmt.Println("\nNo Podman Compose projects found locally or on configured remote hosts.")
-		} else if !projectsFound && len(collectedErrors) > 0 {
-			fmt.Println("\nNo projects discovered successfully.")
+		if !stacksFound && len(collectedErrors) == 0 {
+			fmt.Println("\nNo Podman Compose stacks found locally or on configured remote hosts.")
+		} else if !stacksFound && len(collectedErrors) > 0 {
+			fmt.Println("\nNo stacks discovered successfully.")
 		}
 
 		if len(collectedErrors) > 0 {
@@ -247,8 +246,9 @@ var listCmd = &cobra.Command{
 }
 
 // discoverTargetProjects finds projects based on an identifier, handling local/remote discovery.
-// identifier: The project identifier (e.g., "my-app", "my-app@server1", "my-app@local").
+// identifier: The project identifier (e.g., "my-app", "server1:my-app", "local:my-app").
 //
+//	Can also be "server1:" to discover all projects on server1 (used by status).
 //	If empty, discovers all projects.
 //
 // s: Optional spinner for feedback during remote discovery.
@@ -260,13 +260,19 @@ func discoverTargetProjects(identifier string, s *spinner.Spinner) ([]discovery.
 
 	// 1. Parse Identifier (if provided)
 	if identifier != "" {
-		if parts := strings.SplitN(identifier, "@", 2); len(parts) == 2 {
-			targetProjectName = strings.TrimSpace(parts[0])
-			targetServerName = strings.TrimSpace(parts[1])
-			if targetProjectName == "" || targetServerName == "" {
-				return nil, []error{fmt.Errorf("invalid identifier format: '%s'", identifier)}
+		if strings.HasSuffix(identifier, ":") { // Handle "remote:" case for status
+			targetServerName = strings.TrimSuffix(identifier, ":")
+			targetProjectName = "" // Signal to find all projects on this server
+			if targetServerName == "" {
+				return nil, []error{fmt.Errorf("invalid identifier format: '%s'. Cannot be just ':'", identifier)}
 			}
-		} else {
+		} else if parts := strings.SplitN(identifier, ":", 2); len(parts) == 2 { // Handle "remote:project"
+			targetServerName = strings.TrimSpace(parts[0])
+			targetProjectName = strings.TrimSpace(parts[1])
+			if targetProjectName == "" || targetServerName == "" {
+				return nil, []error{fmt.Errorf("invalid identifier format: '%s'. Use 'project', 'remote:project', or 'remote:'", identifier)}
+			}
+		} else { // Handle "project"
 			targetProjectName = identifier
 			// targetServerName remains "" -> implies local preference or ambiguous
 		}
@@ -299,8 +305,6 @@ func discoverTargetProjects(identifier string, s *spinner.Spinner) ([]discovery.
 			defer wg.Done()
 			for e := range errorChan {
 				collectedErrors = append(collectedErrors, e)
-				// Optionally print errors as they arrive during full scan
-				// errorColor.Fprintf(os.Stderr, "\nError during discovery: %v\n", e)
 			}
 		}()
 		wg.Wait()
@@ -342,10 +346,16 @@ func discoverTargetProjects(identifier string, s *spinner.Spinner) ([]discovery.
 				if err != nil {
 					collectedErrors = append(collectedErrors, fmt.Errorf("remote discovery failed for %s: %w", targetHost.Name, err))
 				} else {
-					// Only add projects matching the name if discovering a specific remote
-					for _, p := range remoteProjects {
-						if p.Name == targetProjectName {
-							projectsToCheck = append(projectsToCheck, p)
+					// If targetProjectName is empty ("remote:" case), add all projects from this remote.
+					// Otherwise, only add the specific project.
+					if targetProjectName == "" {
+						projectsToCheck = append(projectsToCheck, remoteProjects...)
+					} else {
+						for _, p := range remoteProjects {
+							if p.Name == targetProjectName {
+								projectsToCheck = append(projectsToCheck, p)
+								break
+							}
 						}
 					}
 				}
@@ -386,10 +396,12 @@ func discoverTargetProjects(identifier string, s *spinner.Spinner) ([]discovery.
 							if err != nil {
 								remoteErrorChan <- fmt.Errorf("remote discovery failed for %s: %w", hc.Name, err)
 							} else {
-								// Only add remote projects if they match the target name
+								// Only add remote projects if they match the target name (if specified)
+								// If targetProjectName is empty ("remote:" case), this loop won't run, which is correct.
 								for _, p := range remoteProjs {
 									if p.Name == targetProjectName {
 										remoteProjectChan <- p
+										break
 									}
 								}
 							}
@@ -403,7 +415,7 @@ func discoverTargetProjects(identifier string, s *spinner.Spinner) ([]discovery.
 					}()
 
 					for p := range remoteProjectChan {
-						projectsToCheck = append(projectsToCheck, p) // Add matching remote projects
+						projectsToCheck = append(projectsToCheck, p)
 					}
 					for e := range remoteErrorChan {
 						collectedErrors = append(collectedErrors, e)
@@ -425,12 +437,11 @@ func runProjectAction(action string, args []string) {
 
 	statusColor.Printf("Locating project '%s'...\n", projectIdentifier)
 
-	// Use the new helper function for discovery
-	projectsToCheck, collectedErrors := discoverTargetProjects(projectIdentifier, nil) // No spinner needed here yet
+	projectsToCheck, collectedErrors := discoverTargetProjects(projectIdentifier, nil)
 
 	// Handle Discovery Errors
 	if len(collectedErrors) > 0 {
-		errorColor.Fprintln(os.Stderr, "\nErrors during project discovery:")
+		errorColor.Fprintln(os.Stderr, "\nErrors during stack discovery:")
 		for _, err := range collectedErrors {
 			errorColor.Fprintf(os.Stderr, "- %v\n", err)
 		}
@@ -440,7 +451,7 @@ func runProjectAction(action string, args []string) {
 		// discoverTargetProjects doesn't inherently know the context (local only, specific remote, or all)
 		// to provide a super specific "not found" message here.
 		// findProjectByIdentifier will give a more specific error if needed.
-		errorColor.Fprintf(os.Stderr, "\nError: No projects found matching identifier '%s'.\n", projectIdentifier)
+		errorColor.Fprintf(os.Stderr, "\nError: No stacks found matching identifier '%s'.\n", projectIdentifier)
 		os.Exit(1)
 	}
 
@@ -451,7 +462,7 @@ func runProjectAction(action string, args []string) {
 		os.Exit(1)
 	}
 
-	statusColor.Printf("Executing '%s' action for project: %s (%s)\n", action, targetProject.Name, identifierColor.Sprint(targetProject.ServerName))
+	statusColor.Printf("Executing '%s' action for stack: %s (%s)\n", action, targetProject.Name, identifierColor.Sprint(targetProject.ServerName))
 
 	// Determine sequence based on action
 	var sequence []runner.CommandStep
@@ -476,9 +487,9 @@ func runProjectAction(action string, args []string) {
 }
 
 var upCmd = &cobra.Command{
-	Use:               "up <project-identifier>",
-	Short:             "Run 'pull' and 'up -d' for a project",
-	Example:           "  bm up my-local-app\n  bm up 'remote-app (server1)'",
+	Use:               "up <stack-identifier>",
+	Short:             "Run 'pull' and 'up -d' for a stack",
+	Example:           "  bm up my-local-app\n  bm up server1:remote-app",
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -487,9 +498,9 @@ var upCmd = &cobra.Command{
 }
 
 var downCmd = &cobra.Command{
-	Use:               "down <project-identifier>",
-	Short:             "Run 'podman compose down' for a project",
-	Example:           "  bm down my-local-app\n  bm down 'remote-app (server1)'",
+	Use:               "down <stack-identifier>",
+	Short:             "Run 'podman compose down' for a stack",
+	Example:           "  bm down my-local-app\n  bm down server1:remote-app",
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -498,11 +509,11 @@ var downCmd = &cobra.Command{
 }
 
 var refreshCmd = &cobra.Command{
-	Use:               "refresh <project-identifier>",
+	Use:               "refresh <stack-identifier>",
 	Aliases:           []string{"re"},
-	Short:             "Run 'pull', 'down', 'up', and maybe 'prune' for a project (alias: re)",
-	Long:              `Runs 'pull', 'down', 'up -d' for the specified project. Additionally runs 'podman system prune -af' locally if the target project is local.`,
-	Example:           "  bm refresh my-local-app\n  bm re 'remote-app (server1)'",
+	Short:             "Run 'pull', 'down', 'up', and maybe 'prune' for a stack (alias: re)",
+	Long:              `Runs 'pull', 'down', 'up -d' for the specified stack. Additionally runs 'podman system prune -af' locally if the target stack is local.`,
+	Example:           "  bm refresh my-local-app\n  bm re server1:remote-app",
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -511,12 +522,13 @@ var refreshCmd = &cobra.Command{
 }
 
 var statusCmd = &cobra.Command{
-	Use:   "status [project-identifier]",
-	Short: "Show the status of containers for one or all projects",
-	Long: `Shows the status of Podman Compose containers for local and remote projects.
-If a project identifier (e.g., my-app or 'remote-app (server1)') is provided, shows status for that specific project.
-Otherwise, shows status for all discovered projects.`,
-	Example:           "  bm status\n  bm status my-local-app\n  bm status 'remote-app (server1)'",
+	Use:   "status [stack-identifier]",
+	Short: "Show the status of containers for one or all stacks",
+	Long: `Shows the status of Podman Compose containers for local and remote stacks.
+If a stack identifier (e.g., my-app or server1:remote-app) is provided, shows status for that specific stack.
+If a remote identifier ending with ':' (e.g., server1:) is provided, shows status for all stacks on that remote.
+Otherwise, shows status for all discovered stacks.`,
+	Example:           "  bm status\n  bm status my-local-app\n  bm status server1:remote-app\n  bm status server1:",
 	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: projectCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -532,24 +544,35 @@ Otherwise, shows status for all discovered projects.`,
 
 		if !scanAll {
 			specificProjectIdentifier = args[0]
-			// Parse the identifier to determine target
-			if parts := strings.SplitN(specificProjectIdentifier, "@", 2); len(parts) == 2 {
-				targetProjectName = strings.TrimSpace(parts[0])
-				targetServerName = strings.TrimSpace(parts[1])
-				if targetProjectName == "" || targetServerName == "" {
-					errorColor.Fprintf(os.Stderr, "Error: invalid identifier format: '%s'\n", specificProjectIdentifier)
+			// Parse the identifier to determine target (project, remote:project, or remote:)
+			if strings.HasSuffix(specificProjectIdentifier, ":") {
+				targetServerName = strings.TrimSuffix(specificProjectIdentifier, ":")
+				targetProjectName = "" // Signal to get all projects for this server
+				if targetServerName == "" {
+					errorColor.Fprintf(os.Stderr, "Error: invalid identifier format: '%s'. Cannot be just ':'\n", specificProjectIdentifier)
 					os.Exit(1)
 				}
+				statusColor.Printf("Checking status for all projects on %s...\n", identifierColor.Sprint(targetServerName))
+				s.Suffix = fmt.Sprintf(" Discovering projects on %s...", identifierColor.Sprint(targetServerName))
+			} else if parts := strings.SplitN(specificProjectIdentifier, ":", 2); len(parts) == 2 {
+				targetServerName = strings.TrimSpace(parts[0])
+				targetProjectName = strings.TrimSpace(parts[1])
+				if targetProjectName == "" || targetServerName == "" {
+					errorColor.Fprintf(os.Stderr, "Error: invalid identifier format: '%s'. Use 'project', 'remote:project', or 'remote:'\n", specificProjectIdentifier)
+					os.Exit(1)
+				}
+				statusColor.Printf("Checking status for %s...\n", identifierColor.Sprint(specificProjectIdentifier))
+				s.Suffix = fmt.Sprintf(" Discovering %s...", identifierColor.Sprint(specificProjectIdentifier))
 			} else {
 				// Only project name given, implies local preference but could be ambiguous
 				targetProjectName = specificProjectIdentifier
 				targetServerName = "" // Signal to check local first, then handle ambiguity
+				statusColor.Printf("Checking status for %s...\n", identifierColor.Sprint(specificProjectIdentifier))
+				s.Suffix = fmt.Sprintf(" Discovering %s...", identifierColor.Sprint(specificProjectIdentifier))
 			}
-			statusColor.Printf("Checking status for %s...\n", identifierColor.Sprint(specificProjectIdentifier))
-			s.Suffix = fmt.Sprintf(" Discovering %s...", identifierColor.Sprint(specificProjectIdentifier))
 		} else {
-			statusColor.Println("Discovering all projects and checking status...")
-			s.Suffix = " Discovering projects..."
+			statusColor.Println("Discovering all stacks and checking status...")
+			s.Suffix = " Discovering stacks..."
 		}
 		s.Start()
 
@@ -559,12 +582,12 @@ Otherwise, shows status for all discovered projects.`,
 			discoveryIdentifier = specificProjectIdentifier
 		}
 		projectsToCheck, collectedErrors = discoverTargetProjects(discoveryIdentifier, s)
-		s.Stop() // Stop discovery spinner
+		s.Stop()
 
 		// --- Handle Discovery Errors ---
 		// Print errors collected during discovery
 		if len(collectedErrors) > 0 {
-			errorColor.Fprintln(os.Stderr, "\nErrors during project discovery:")
+			errorColor.Fprintln(os.Stderr, "\nErrors during stack discovery:")
 			for _, err := range collectedErrors {
 				errorColor.Fprintf(os.Stderr, "- %v\n", err)
 			}
@@ -579,8 +602,25 @@ Otherwise, shows status for all discovered projects.`,
 		var finalProjectsToProcess []discovery.Project
 		var projectFound bool
 
-		// Filter the results if a specific project was requested
-		if !scanAll {
+		// Filter the results based on the request (all, specific project, or all on a remote)
+		if scanAll {
+			// Process all discovered projects
+			finalProjectsToProcess = projectsToCheck
+			projectFound = len(finalProjectsToProcess) > 0
+		} else if targetProjectName == "" && targetServerName != "" { // Case: "remote:"
+			// Filter projectsToCheck to only include those from the targetServerName
+			for _, p := range projectsToCheck {
+				if p.ServerName == targetServerName {
+					finalProjectsToProcess = append(finalProjectsToProcess, p)
+				}
+			}
+			projectFound = len(finalProjectsToProcess) > 0
+			if !projectFound && len(collectedErrors) == 0 {
+				// If discovery was successful but no stacks found for this specific remote
+				errorColor.Fprintf(os.Stderr, "\nError: No stacks found on remote '%s'.\n", targetServerName)
+				os.Exit(1)
+			}
+		} else { // Case: "project" or "remote:project"
 			// Use findProjectByIdentifier to handle ambiguity and select the single target
 			targetProject, err := findProjectByIdentifier(projectsToCheck, specificProjectIdentifier)
 			if err != nil {
@@ -597,17 +637,11 @@ Otherwise, shows status for all discovered projects.`,
 				if len(projectsToCheck) == 0 {
 					os.Exit(1) // Exit if discovery yielded nothing and target wasn't found/ambiguous
 				}
-				finalProjectsToProcess = projectsToCheck // Show status for all potentially relevant projects found
-				projectFound = true                      // Mark as found to proceed with status check loop
+				projectFound = false // Mark as not found to prevent status check loop for the failed target
 			} else {
-				// Successfully found the specific project
 				finalProjectsToProcess = []discovery.Project{targetProject}
 				projectFound = true
 			}
-		} else {
-			// Scan all: process all discovered projects
-			finalProjectsToProcess = projectsToCheck
-			projectFound = len(finalProjectsToProcess) > 0
 		}
 
 		// --- Perform Status Checks ---
@@ -616,12 +650,12 @@ Otherwise, shows status for all discovered projects.`,
 			var statusWg sync.WaitGroup
 			statusWg.Add(len(finalProjectsToProcess))
 
-			s.Suffix = " Checking project status..."
+			s.Suffix = " Checking stack status..."
 			s.Start()
 
 			for _, project := range finalProjectsToProcess {
 				go func(p discovery.Project) {
-					defer statusWg.Done()
+					defer statusWg.Done() // Corrected back to statusWg
 					statusInfo := runner.GetProjectStatus(p)
 					statusChan <- statusInfo
 				}(project)
@@ -635,7 +669,7 @@ Otherwise, shows status for all discovered projects.`,
 			for statusInfo := range statusChan {
 				s.Stop()
 
-				fmt.Printf("\nProject: %s (%s) ", statusInfo.Project.Name, identifierColor.Sprint(statusInfo.Project.ServerName))
+				fmt.Printf("\nStack: %s (%s) ", statusInfo.Project.Name, identifierColor.Sprint(statusInfo.Project.ServerName))
 				switch statusInfo.OverallStatus {
 				case runner.StatusUp:
 					statusUpColor.Printf("[%s]\n", statusInfo.OverallStatus)
@@ -676,10 +710,10 @@ Otherwise, shows status for all discovered projects.`,
 
 		if !projectFound && len(collectedErrors) == 0 {
 			if scanAll {
-				fmt.Println("\nNo Podman Compose projects found locally or on configured remote hosts.")
+				fmt.Println("\nNo Podman Compose stacks found locally or on configured remote hosts.")
 			}
 		} else if !projectFound && len(collectedErrors) > 0 {
-			fmt.Println("\nProject discovery or status check failed.")
+			fmt.Println("\nStack discovery or status check failed.")
 		}
 
 		if len(collectedErrors) > 0 {
@@ -698,7 +732,6 @@ Otherwise, shows status for all discovered projects.`,
 
 func runSequence(project discovery.Project, sequence []runner.CommandStep) error {
 	for _, step := range sequence {
-		// Include project identifier in step message
 		stepColor.Printf("\n--- Running Step: %s for %s (%s) ---\n", step.Name, project.Name, identifierColor.Sprint(project.ServerName))
 
 		outChan, errChan := runner.StreamCommand(step)

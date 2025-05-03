@@ -36,15 +36,15 @@ type Project struct {
 	AbsoluteRemoteRoot string          // empty if local
 }
 
-// Identifier returns the unique string representation (e.g., "my-app" or "my-app@server1").
+// Identifier returns the unique string representation (e.g., "my-app" or "server1:my-app").
 func (p Project) Identifier() string {
 	if !p.IsRemote {
 		return p.Name // Implicit local
 	}
-	return fmt.Sprintf("%s@%s", p.Name, p.ServerName)
+	return fmt.Sprintf("%s:%s", p.ServerName, p.Name)
 }
 
-// GetComposeRootDirectory finds the root directory for local compose projects,
+// GetComposeRootDirectory finds the root directory for local compose stacks,
 // checking config override first, then defaults.
 func GetComposeRootDirectory() (string, error) {
 	cfg, err := config.LoadConfig()
@@ -90,7 +90,7 @@ func GetComposeRootDirectory() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("could not find a valid local project root directory (checked config 'local_root' and defaults: ~/bucket, ~/compose-bucket)")
+	return "", fmt.Errorf("could not find a valid local stack root directory (checked config 'local_root' and defaults: ~/bucket, ~/compose-bucket)")
 }
 
 func FindProjects() (<-chan Project, <-chan error, <-chan struct{}) {
@@ -184,7 +184,7 @@ func FindLocalProjects(rootDir string) ([]Project, error) {
 				HostConfig: nil,
 			})
 		} else if !os.IsNotExist(errYaml) {
-			fmt.Fprintf(os.Stderr, "Warning: could not stat compose files in local project %s: %v\n", projectPath, errYaml)
+			fmt.Fprintf(os.Stderr, "Warning: could not stat compose files in local stack %s: %v\n", projectPath, errYaml)
 		}
 	}
 
@@ -255,7 +255,7 @@ func FindRemoteProjects(hostConfig *config.SSHHost) ([]Project, error) {
 	}
 	defer findSession.Close()
 
-	// Command to find directories containing compose.y*ml one level deep using fd
+	// Command to find directories containing compose.y*ml one level deep using fd (representing stack roots)
 	remoteFindCmd := fmt.Sprintf(
 		`fd -g -d 2 'compose.y*ml' %s -x dirname {} | sort -u`,
 		util.QuoteArgForShell(absoluteRemoteRoot),

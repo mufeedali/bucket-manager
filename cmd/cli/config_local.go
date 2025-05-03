@@ -16,9 +16,9 @@ import (
 
 var configSetLocalRootCmd = &cobra.Command{
 	Use:   "set-local-root <path>",
-	Short: "Set the custom root directory for local projects",
-	Long: `Sets the root directory where bucket-manager will look for local Podman Compose projects.
-Use an absolute path or a path starting with '~/' (e.g., '~/my-compose-projects').
+	Short: "Set the custom root directory for local stacks",
+	Long: `Sets the root directory where bucket-manager will look for local Podman Compose stacks.
+Use an absolute path or a path starting with '~/' (e.g., '~/my-compose-stacks').
 If set, this overrides the default search paths (~/bucket, ~/compose-bucket).
 To revert to default behavior, set the path to an empty string: bm config set-local-root ""`,
 	Args: cobra.ExactArgs(1),
@@ -45,16 +45,16 @@ To revert to default behavior, set the path to an empty string: bm config set-lo
 		}
 
 		if localRootPath == "" {
-			successColor.Println("Local project root reset to default search paths (~/bucket, ~/compose-bucket).")
+			successColor.Println("Local stack root reset to default search paths (~/bucket, ~/compose-bucket).")
 		} else {
-			successColor.Printf("Local project root set to: %s\n", localRootPath)
+			successColor.Printf("Local stack root set to: %s\n", localRootPath)
 		}
 	},
 }
 
 var configGetLocalRootCmd = &cobra.Command{
 	Use:   "get-local-root",
-	Short: "Show the currently configured local project root directory",
+	Short: "Show the currently configured local stack root directory",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := config.LoadConfig()
@@ -91,7 +91,7 @@ var configGetLocalRootCmd = &cobra.Command{
 			} else if activePath == defaultBucket || activePath == defaultComposeBucket {
 				source = "(default)"
 			} else {
-				source = "(unknown source)" // Should ideally not happen with current discovery logic
+				source = "(unknown source)"
 			}
 			successColor.Printf("Effective path being used: %s %s\n", activePath, source)
 
