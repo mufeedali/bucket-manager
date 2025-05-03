@@ -22,10 +22,9 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 )
 
-// sshManager is a package-level variable holding the SSH connection manager.
-// This should be initialized by the calling code (CLI/TUI).
 var sshManager *ssh.Manager
 
+// InitSSHManager sets the package-level SSH manager instance.
 func InitSSHManager(manager *ssh.Manager) {
 	if sshManager != nil {
 		return
@@ -33,21 +32,18 @@ func InitSSHManager(manager *ssh.Manager) {
 	sshManager = manager
 }
 
-// CommandStep defines a single command to be executed for a specific project.
 type CommandStep struct {
-	Name    string            // User-friendly name for the step
-	Command string            // The command to run (e.g., "podman")
-	Args    []string          // Arguments for the command
-	Project discovery.Project // The target project (local or remote)
+	Name    string
+	Command string
+	Args    []string
+	Project discovery.Project
 }
 
-// OutputLine represents a line of output from a command stream.
 type OutputLine struct {
 	Line    string
 	IsError bool // True if the line came from stderr
 }
 
-// StreamCommand executes a command step (local or remote) and streams its stdout/stderr.
 func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 	outChan := make(chan OutputLine)
 	errChan := make(chan error, 1)
@@ -385,7 +381,7 @@ func GetProjectStatus(project discovery.Project) ProjectRuntimeInfo {
 	for scanner.Scan() {
 		lineBytes := scanner.Bytes()
 		if len(bytes.TrimSpace(lineBytes)) == 0 {
-			continue // Skip empty lines
+			continue
 		}
 
 		var container ContainerState

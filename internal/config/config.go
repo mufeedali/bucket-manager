@@ -13,21 +13,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// SSHHost defines the configuration for connecting to a remote host via SSH using the internal client.
 type SSHHost struct {
-	Name       string `yaml:"name"`               // User-friendly identifier (e.g., "server1")
+	Name       string `yaml:"name"`
 	Hostname   string `yaml:"hostname"`
 	User       string `yaml:"user"`
-	Port       int    `yaml:"port,omitempty"`     // Optional SSH port (defaults to 22)
-	KeyPath    string `yaml:"key_path,omitempty"` // Optional path to private key
+	Port       int    `yaml:"port,omitempty"`
+	KeyPath    string `yaml:"key_path,omitempty"`
 	Password   string `yaml:"password,omitempty"` // Optional password (plaintext, discouraged)
-	RemoteRoot string `yaml:"remote_root,omitempty"` // Optional root directory for projects on the remote host (defaults to ~/bucket or ~/compose-bucket)
-	Disabled   bool   `yaml:"disabled,omitempty"` // Optional flag to disable this host
+	RemoteRoot string `yaml:"remote_root,omitempty"`
+	Disabled   bool   `yaml:"disabled,omitempty"`
 }
 
-// Config holds the overall application configuration, including SSH hosts and local settings.
 type Config struct {
-	LocalRoot string    `yaml:"local_root,omitempty"` // Optional custom root directory for local projects
+	LocalRoot string    `yaml:"local_root,omitempty"`
 	SSHHosts  []SSHHost `yaml:"ssh_hosts"`
 }
 
@@ -39,8 +37,6 @@ func DefaultConfigPath() (string, error) {
 	return filepath.Join(configDir, "bucket-manager", "config.yaml"), nil
 }
 
-// LoadConfig loads the configuration from the default path.
-// If the file doesn't exist, it returns an empty config without error.
 func LoadConfig() (Config, error) {
 	configPath, err := DefaultConfigPath()
 	if err != nil {
@@ -50,7 +46,7 @@ func LoadConfig() (Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Config{}, nil // Config file doesn't exist, return default empty config
+			return Config{}, nil
 		}
 		return Config{}, fmt.Errorf("failed to read config file %s: %w", configPath, err)
 	}
@@ -61,7 +57,6 @@ func LoadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 	}
 
-	// Filter out disabled hosts
 	cfg.SSHHosts = slices.DeleteFunc(cfg.SSHHosts, func(h SSHHost) bool {
 		return h.Disabled
 	})
@@ -108,7 +103,6 @@ func SaveConfig(cfg Config) error {
 }
 func ResolvePath(path string) (string, error) {
 	if !strings.HasPrefix(path, "~/") {
-		// Return unchanged if it's not a tilde path (could be absolute or relative)
 		return path, nil
 	}
 

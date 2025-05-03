@@ -17,7 +17,6 @@ import (
 
 var dimColor = color.New(color.Faint)
 
-// configCmd represents the base command for configuration management.
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage bucket-manager configuration",
@@ -25,7 +24,6 @@ var configCmd = &cobra.Command{
 	// PersistentPreRun ensures config dir exists, already handled by rootCmd
 }
 
-// sshCmd represents the command for managing SSH host configurations.
 var sshCmd = &cobra.Command{
 	Use:   "ssh",
 	Short: "Manage SSH host configurations",
@@ -117,7 +115,6 @@ var sshAddCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// RemoteRoot is now optional
 		prompt := "Remote Root Path (optional, defaults to ~/bucket or ~/compose-bucket):"
 		newHost.RemoteRoot, inputErr = promptString(prompt, false)
 		if inputErr != nil {
@@ -176,18 +173,18 @@ var sshEditCmd = &cobra.Command{
 
 		hostIndex := choice - 1
 		originalHost := cfg.SSHHosts[hostIndex] // Keep original for comparison/defaults
-		editedHost := originalHost              // Copy to modify
+		editedHost := originalHost
 
 		fmt.Printf("\nEditing SSH host '%s'. Press Enter to keep the current value.\n", identifierColor.Sprint(originalHost.Name))
 
 		var inputErr error
 
-		editedHost.Name, inputErr = promptString(fmt.Sprintf("Unique Name [%s]:", originalHost.Name), false) // Name is required, but prompt shows default
+		editedHost.Name, inputErr = promptString(fmt.Sprintf("Unique Name [%s]:", originalHost.Name), false)
 		if inputErr != nil {
 			errorColor.Fprintf(os.Stderr, "Error reading name: %v\n", inputErr)
 			os.Exit(1)
 		}
-		if editedHost.Name == "" { // If user just pressed Enter
+		if editedHost.Name == "" {
 			editedHost.Name = originalHost.Name
 		} else if editedHost.Name != originalHost.Name {
 			// Check if the new name conflicts with *other* existing hosts
@@ -217,7 +214,6 @@ var sshEditCmd = &cobra.Command{
 			editedHost.User = originalHost.User
 		}
 
-		// Handle port default display correctly
 		portDefault := originalHost.Port
 		if portDefault == 0 {
 			portDefault = 22
@@ -231,7 +227,6 @@ var sshEditCmd = &cobra.Command{
 			editedHost.Port = 0
 		} // Store 0 if it's the default 22 for cleaner yaml
 
-		// RemoteRoot is optional, allow clearing it
 		remoteRootPrompt := "Remote Root Path (leave blank to use default: ~/bucket or ~/compose-bucket)"
 		currentRemoteRootDisplay := originalHost.RemoteRoot
 		if currentRemoteRootDisplay == "" {
@@ -242,16 +237,12 @@ var sshEditCmd = &cobra.Command{
 			errorColor.Fprintf(os.Stderr, "Error reading remote root: %v\n", inputErr)
 			os.Exit(1)
 		}
-		// No need to restore original if blank, blank means use default
-
-		// Use the shared helper function, passing true for isEditing and the original password
 		inputErr = promptForAuthDetails(&editedHost, true, originalHost.Password)
 		if inputErr != nil {
 			errorColor.Fprintf(os.Stderr, "Error getting authentication details: %v\n", inputErr)
 			os.Exit(1)
 		}
 
-		// Prompt for Disabled status
 		disablePrompt := fmt.Sprintf("Disable this host? (Currently: %t) (y/N):", originalHost.Disabled)
 		disableChoice, inputErr := promptConfirm(disablePrompt)
 		if inputErr != nil {
@@ -396,7 +387,7 @@ var sshImportCmd = &cobra.Command{
 				selectedPotentialHost := potentialHosts[index-1]
 				foundInImportable := false
 				for _, ih := range importableHosts {
-					if ih.Alias == selectedPotentialHost.Alias { // Match by alias
+					if ih.Alias == selectedPotentialHost.Alias {
 						hostsToImport = append(hostsToImport, ih)
 						foundInImportable = true
 						break
@@ -427,7 +418,6 @@ var sshImportCmd = &cobra.Command{
 				continue
 			}
 
-			// RemoteRoot is optional during import as well
 			remoteRootPrompt := "Remote Root Path (optional, defaults to ~/bucket or ~/compose-bucket):"
 			remoteRoot, err := promptString(remoteRootPrompt, false)
 			if err != nil {
@@ -487,7 +477,6 @@ func init() {
 
 var reader = bufio.NewReader(os.Stdin)
 
-// promptString prompts the user for a string value.
 func promptString(prompt string, required bool) (string, error) {
 	fmt.Print(prompt + " ")
 	input, err := reader.ReadString('\n')
@@ -501,7 +490,6 @@ func promptString(prompt string, required bool) (string, error) {
 	return input, nil
 }
 
-// promptOptionalInt prompts for an optional integer value.
 func promptOptionalInt(prompt string, defaultValue int) (int, error) {
 	fmt.Printf("%s (default: %d): ", prompt, defaultValue)
 	input, err := reader.ReadString('\n')
@@ -519,7 +507,6 @@ func promptOptionalInt(prompt string, defaultValue int) (int, error) {
 	return val, nil
 }
 
-// promptConfirm prompts for a yes/no confirmation.
 func promptConfirm(prompt string) (bool, error) {
 	fmt.Print(prompt + " (y/N): ")
 	input, err := reader.ReadString('\n')
@@ -589,10 +576,9 @@ func promptForAuthDetails(host *config.SSHHost, isEditing bool, originalPassword
 		host.Password = ""
 	}
 
-	// Prompt for details based on the *final* choice
 	switch newAuthChoice {
 	case 1:
-		defaultKey := host.KeyPath // Use potentially cleared value
+		defaultKey := host.KeyPath
 		prompt := "Path to Private Key File"
 		required := true // Key path is required if this method is chosen
 		if isEditing && defaultKey != "" {
@@ -619,7 +605,7 @@ func promptForAuthDetails(host *config.SSHHost, isEditing bool, originalPassword
 		prompt := "SSH Password"
 		required := true // Password is required if this method is chosen
 		if isEditing && host.Password != "" {
-			prompt += " (leave blank to keep current):" // Don't show default password
+			prompt += " (leave blank to keep current):"
 			required = false
 		} else {
 			prompt += ":"

@@ -22,7 +22,7 @@ func RunTUI() {
 	}
 
 	sshManager := ssh.NewManager()
-	defer sshManager.CloseAll() // Ensure connections are closed when TUI exits
+	defer sshManager.CloseAll()
 
 	discovery.InitSSHManager(sshManager)
 	runner.InitSSHManager(sshManager)

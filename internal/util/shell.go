@@ -5,9 +5,6 @@ package util
 
 import "strings"
 
-// QuoteArgForShell wraps an argument for safe use in a remote shell command.
-// It handles existing single quotes by closing the quote, adding an escaped quote,
-// and reopening. It also handles the tilde prefix correctly for shell expansion.
 func QuoteArgForShell(arg string) string {
 	// Replace ' with '\''
 	cleanedString := strings.ReplaceAll(arg, "'", "'\\''")
@@ -16,6 +13,5 @@ func QuoteArgForShell(arg string) string {
 		// Return tilde outside quotes, quote the rest
 		return `~/"` + strings.TrimPrefix(cleanedString, "~/") + `"`
 	}
-	// Quote the entire argument if no tilde prefix
 	return `"` + cleanedString + `"`
 }

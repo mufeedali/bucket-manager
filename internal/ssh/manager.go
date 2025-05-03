@@ -16,8 +16,8 @@ import (
 )
 
 type Manager struct {
-	clients map[string]*ssh.Client // Map host name (from config.SSHHost.Name) to active client
-	mu      sync.Mutex             // Protects access to the clients map
+	clients map[string]*ssh.Client
+	mu      sync.Mutex
 }
 
 func NewManager() *Manager {
@@ -37,7 +37,6 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 			m.mu.Unlock()
 			return client, nil
 		}
-		// Connection seems dead, close it and remove from map
 		client.Close()
 		delete(m.clients, hostConfig.Name)
 	}
@@ -89,9 +88,8 @@ func (m *Manager) getAuthMethods(hostConfig config.SSHHost) ([]ssh.AuthMethod, e
 	if hostConfig.KeyPath != "" {
 		keyPath, resolveErr := config.ResolvePath(hostConfig.KeyPath)
 		if resolveErr != nil {
-			// Log the error but proceed using the original path
 			fmt.Fprintf(os.Stderr, "Warning: could not resolve key path '%s': %v\n", hostConfig.KeyPath, resolveErr)
-			keyPath = hostConfig.KeyPath // Use original path for ReadFile
+			keyPath = hostConfig.KeyPath
 		}
 
 		key, err := os.ReadFile(keyPath)

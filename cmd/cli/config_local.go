@@ -31,7 +31,6 @@ To revert to default behavior, set the path to an empty string: bm config set-lo
 			os.Exit(1)
 		}
 
-		// Basic validation (more thorough check happens during discovery)
 		if localRootPath != "" && !strings.HasPrefix(localRootPath, "/") && !strings.HasPrefix(localRootPath, "~/") {
 			errorColor.Fprintf(os.Stderr, "Error: Path must be absolute or start with '~/'\n")
 			os.Exit(1)
@@ -74,32 +73,37 @@ var configGetLocalRootCmd = &cobra.Command{
 			}
 		} else {
 			fmt.Println("Local root not explicitly configured.")
-			fmt.Printf("Using default search paths: %s, %s\n", identifierColor.Sprint("~/bucket"), identifierColor.Sprint("~/compose-bucket"))
-			// Show the actual default found, if any
-			defaultPath, defaultErr := discovery.GetComposeRootDirectory() // This will now check config first, then defaults
-			if defaultErr == nil {
-				// Check if the found path is actually one of the defaults or the configured one
-				var resolvedConfigPath string
-				if cfg.LocalRoot != "" {
-					resolvedConfigPath, _ = config.ResolvePath(cfg.LocalRoot)
-				}
-				homeDir, _ := os.UserHomeDir()
-				defaultBucket := filepath.Join(homeDir, "bucket")
-				defaultComposeBucket := filepath.Join(homeDir, "compose-bucket")
+			fmt.Printf("Default search paths: %s, %s\n", identifierColor.Sprint("~/bucket"), identifierColor.Sprint("~/compose-bucket"))
+		}
 
-				if defaultPath == defaultBucket || defaultPath == defaultComposeBucket {
-					successColor.Printf("Currently active default: %s\n", defaultPath)
-				} else if cfg.LocalRoot != "" && defaultPath == resolvedConfigPath {
-					successColor.Printf("Currently active (from config): %s\n", defaultPath)
-				} else {
-					// This case might occur if GetComposeRootDirectory found a valid but unexpected path
-					statusColor.Printf("Currently active path: %s\n", defaultPath)
-				}
-			} else if strings.Contains(defaultErr.Error(), "could not find") {
-				errorColor.Println("Neither default path currently exists.")
+		// Report the path that discovery will actually use
+		activePath, activeErr := discovery.GetComposeRootDirectory()
+		if activeErr == nil {
+			// Determine if the active path came from config or default
+			resolvedConfigPath, _ := config.ResolvePath(cfg.LocalRoot) // Resolve even if empty
+			homeDir, _ := os.UserHomeDir()
+			defaultBucket := filepath.Join(homeDir, "bucket")
+			defaultComposeBucket := filepath.Join(homeDir, "compose-bucket")
+
+			source := ""
+			if cfg.LocalRoot != "" && activePath == resolvedConfigPath {
+				source = "(from config)"
+			} else if activePath == defaultBucket || activePath == defaultComposeBucket {
+				source = "(default)"
 			} else {
-				errorColor.Printf("Error checking default paths: %v\n", defaultErr)
+				source = "(unknown source)" // Should ideally not happen with current discovery logic
 			}
+			successColor.Printf("Effective path being used: %s %s\n", activePath, source)
+
+		} else if strings.Contains(activeErr.Error(), "could not find") {
+			if cfg.LocalRoot != "" {
+				errorColor.Printf("Warning: Configured path '%s' not found, and no default path exists.\n", cfg.LocalRoot)
+			} else {
+				errorColor.Println("Warning: Neither default path exists.")
+			}
+		} else {
+			// Report other errors encountered during discovery check
+			errorColor.Printf("Error determining effective path: %v\n", activeErr)
 		}
 	},
 }
