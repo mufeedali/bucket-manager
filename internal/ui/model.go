@@ -2138,7 +2138,7 @@ func (m *model) renderStackStatus(b *strings.Builder, stackID string) {
 	}
 }
 
-func (m model) View() string { // Changed receiver from *model to model
+func (m *model) View() string {
 	if !m.ready {
 		return "Initializing..."
 	}
