@@ -45,17 +45,19 @@ var (
 type state int
 
 const (
-	stateLoadingProjects state = iota
-	stateProjectList
+	stateLoadingStacks state = iota
+	stateStackList
 	stateRunningSequence
 	stateSequenceError
-	stateProjectDetails
+	stateStackDetails
 	stateSshConfigList
 	stateSshConfigRemoveConfirm
 	stateSshConfigAddForm
 	stateSshConfigImportSelect
 	stateSshConfigImportDetails
 	stateSshConfigEditForm
+	statePruneConfirm      // New state for prune confirmation
+	stateRunningHostAction // New state for running host-level actions like prune
 )
 
 const (
@@ -87,6 +89,7 @@ type KeyMap struct {
 	UpAction      key.Binding
 	DownAction    key.Binding
 	RefreshAction key.Binding
+	PullAction    key.Binding
 
 	Remove key.Binding
 	Add    key.Binding
@@ -94,6 +97,7 @@ type KeyMap struct {
 	Edit   key.Binding
 
 	ToggleDisabled key.Binding
+	PruneAction    key.Binding // New keybinding for prune
 }
 
 var DefaultKeyMap = KeyMap{
@@ -168,19 +172,23 @@ var DefaultKeyMap = KeyMap{
 
 	Config: key.NewBinding(
 		key.WithKeys("c"),
-		key.WithHelp("c", "manage ssh config"),
+		key.WithHelp("c", "configure hosts"),
 	),
 	UpAction: key.NewBinding(
 		key.WithKeys("u"),
-		key.WithHelp("u", "up project(s)"),
+		key.WithHelp("u", "up stack(s)"),
 	),
 	DownAction: key.NewBinding(
 		key.WithKeys("d"),
-		key.WithHelp("d", "down project(s)"),
+		key.WithHelp("d", "down stack(s)"),
 	),
 	RefreshAction: key.NewBinding(
 		key.WithKeys("r"),
-		key.WithHelp("r", "refresh project(s)"),
+		key.WithHelp("r", "refresh stack(s)"),
+	),
+	PullAction: key.NewBinding(
+		key.WithKeys("p"),
+		key.WithHelp("p", "pull images"),
 	),
 
 	Remove: key.NewBinding(
@@ -204,13 +212,17 @@ var DefaultKeyMap = KeyMap{
 		key.WithKeys(" "),
 		key.WithHelp("space", "toggle disabled"),
 	),
+	PruneAction: key.NewBinding(
+		key.WithKeys("P"),               // Using Shift+P for prune
+		key.WithHelp("P", "prune host"), // Changed help text slightly as TUI only prunes selected
+	),
 }
 
 type model struct {
 	keymap               KeyMap
-	projects             []discovery.Project
+	stacks               []discovery.Stack
 	cursor               int
-	selectedProjectIdxs  map[int]struct{}
+	selectedStackIdxs    map[int]struct{}
 	configCursor         int
 	hostToRemove         *config.SSHHost
 	hostToEdit           *config.SSHHost
@@ -232,11 +244,16 @@ type model struct {
 	height               int
 	outputChan           <-chan runner.OutputLine
 	errorChan            <-chan error
-	projectStatuses      map[string]runner.ProjectRuntimeInfo
+	stackStatuses        map[string]runner.StackRuntimeInfo
 	loadingStatus        map[string]bool
-	detailedProject      *discovery.Project
-	sequenceProject      *discovery.Project
-	projectsInSequence   []*discovery.Project
+	detailedStack        *discovery.Stack
+	sequenceStack        *discovery.Stack   // The primary stack for the current sequence (used for display)
+	stacksInSequence     []*discovery.Stack // All stacks involved in the current sequence
+
+	// Host action state
+	hostsToPrune          []runner.HostTarget // Hosts targeted for prune action
+	currentHostActionStep runner.HostCommandStep
+	hostActionError       error
 
 	// Form state (Add/Edit/Import Details)
 	formInputs     []textinput.Model
@@ -257,7 +274,7 @@ type model struct {
 
 // --- Messages ---
 
-type projectDiscoveredMsg struct{ project discovery.Project }
+type stackDiscoveredMsg struct{ stack discovery.Stack }
 type discoveryErrorMsg struct{ err error }
 type discoveryFinishedMsg struct{}
 type sshConfigLoadedMsg struct {
@@ -277,23 +294,23 @@ type sshHostsImportedMsg struct {
 }
 type outputLineMsg struct{ line runner.OutputLine }
 type stepFinishedMsg struct{ err error }
-type projectStatusLoadedMsg struct {
-	projectIdentifier string
-	statusInfo        runner.ProjectRuntimeInfo
+type stackStatusLoadedMsg struct {
+	stackIdentifier string
+	statusInfo      runner.StackRuntimeInfo
 }
 type channelsAvailableMsg struct {
 	outChan <-chan runner.OutputLine
 	errChan <-chan error
 }
 
-func findProjectsCmd() tea.Cmd {
+func findStacksCmd() tea.Cmd {
 	return func() tea.Msg {
-		projectChan, errorChan, doneChan := discovery.FindProjects()
+		stackChan, errorChan, doneChan := discovery.FindStacks()
 
 		go func() {
-			for p := range projectChan {
+			for s := range stackChan {
 				if BubbleProgram != nil {
-					BubbleProgram.Send(projectDiscoveredMsg{project: p})
+					BubbleProgram.Send(stackDiscoveredMsg{stack: s})
 				}
 			}
 		}()
@@ -317,12 +334,12 @@ func findProjectsCmd() tea.Cmd {
 	}
 }
 
-func fetchProjectStatusCmd(project discovery.Project) tea.Cmd {
+func fetchStackStatusCmd(stack discovery.Stack) tea.Cmd {
 	return func() tea.Msg {
-		statusInfo := runner.GetProjectStatus(project)
-		return projectStatusLoadedMsg{
-			projectIdentifier: project.Identifier(),
-			statusInfo:        statusInfo,
+		statusInfo := runner.GetStackStatus(stack)
+		return stackStatusLoadedMsg{
+			stackIdentifier: stack.Identifier(),
+			statusInfo:      statusInfo,
 		}
 	}
 }
@@ -484,6 +501,14 @@ func saveImportedSshHostsCmd(hostsToSave []config.SSHHost) tea.Cmd {
 	}
 }
 
+// runHostActionCmd triggers the execution of a host-level command step.
+func runHostActionCmd(step runner.HostCommandStep) tea.Cmd {
+	return func() tea.Msg {
+		outChan, errChan := runner.RunHostCommand(step)
+		return channelsAvailableMsg{outChan: outChan, errChan: errChan}
+	}
+}
+
 func runStepCmd(step runner.CommandStep) tea.Cmd {
 	return func() tea.Msg {
 		outChan, errChan := runner.StreamCommand(step)
@@ -512,18 +537,18 @@ func InitialModel() model {
 	vp := viewport.New(0, 0)
 	m := model{
 		keymap:               DefaultKeyMap,
-		currentState:         stateLoadingProjects,
+		currentState:         stateLoadingStacks,
 		isDiscovering:        true,
 		cursor:               0,
-		selectedProjectIdxs:  make(map[int]struct{}),
+		selectedStackIdxs:    make(map[int]struct{}),
 		configCursor:         0,
-		projectStatuses:      make(map[string]runner.ProjectRuntimeInfo),
+		stackStatuses:        make(map[string]runner.StackRuntimeInfo),
 		loadingStatus:        make(map[string]bool),
 		configuredHosts:      []config.SSHHost{},
 		discoveryErrors:      []error{},
-		detailedProject:      nil,
-		sequenceProject:      nil,
-		projectsInSequence:   nil,
+		detailedStack:        nil,
+		sequenceStack:        nil,
+		stacksInSequence:     nil,
 		viewport:             vp,
 		sshConfigViewport:    vp,
 		detailsViewport:      vp,
@@ -697,6 +722,7 @@ func createImportDetailsForm(pHost config.PotentialHost) ([]textinput.Model, int
 	t.Width = 40
 	inputs[6] = t
 
+	// Add placeholders for unused fields to maintain array size consistency
 	for i := 0; i < 4; i++ {
 		inputs[i] = textinput.New()
 	}
@@ -705,7 +731,7 @@ func createImportDetailsForm(pHost config.PotentialHost) ([]textinput.Model, int
 }
 
 func (m *model) Init() tea.Cmd {
-	return findProjectsCmd()
+	return findStacksCmd()
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -740,22 +766,22 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
 			case key.Matches(msg, m.keymap.Back), key.Matches(msg, m.keymap.Enter):
-				for _, proj := range m.projectsInSequence {
-					if proj != nil {
-						projID := proj.Identifier()
-						if !m.loadingStatus[projID] {
-							m.loadingStatus[projID] = true
-							cmds = append(cmds, fetchProjectStatusCmd(*proj))
+				for _, stack := range m.stacksInSequence {
+					if stack != nil {
+						stackID := stack.Identifier()
+						if !m.loadingStatus[stackID] {
+							m.loadingStatus[stackID] = true
+							cmds = append(cmds, fetchStackStatusCmd(*stack))
 						}
 					}
 				}
-				m.currentState = stateProjectList
+				m.currentState = stateStackList
 				m.outputContent = ""
 				m.lastError = nil
 				m.currentSequence = nil
 				m.currentStepIndex = 0
-				m.sequenceProject = nil
-				m.projectsInSequence = nil
+				m.sequenceStack = nil
+				m.stacksInSequence = nil
 				m.viewport.GotoTop()
 				return m, tea.Batch(cmds...)
 			}
@@ -827,7 +853,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Handle navigation and other keys based on state
 		switch m.currentState {
-		case stateProjectList:
+		case stateStackList:
 			switch {
 			case key.Matches(msg, m.keymap.Config):
 				m.currentState = stateSshConfigList
@@ -836,34 +862,37 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
 			default:
-				cmds = append(cmds, m.handleProjectListKeys(msg)...)
+				cmds = append(cmds, m.handleStackListKeys(msg)...)
 			}
 
-		case stateProjectDetails:
+		case stateStackDetails:
 			switch {
 			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
 			case key.Matches(msg, m.keymap.Back):
-				m.currentState = stateProjectList
-				m.detailedProject = nil
+				m.currentState = stateStackList
+				m.detailedStack = nil
 			}
 
 		case stateSshConfigList:
+			// Calculate the total number of items including "local"
+			totalItems := len(m.configuredHosts) + 1
+
 			switch {
 			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
 			case key.Matches(msg, m.keymap.Back):
-				m.currentState = stateProjectList
+				m.currentState = stateStackList
 				m.lastError = nil
 				m.importError = nil
 				m.importInfoMsg = ""
 			case key.Matches(msg, m.keymap.Up):
-				if m.configCursor > 0 {
+				if m.configCursor > 0 { // Stop at "local" (index 0)
 					m.configCursor--
 				}
 				m.sshConfigViewport.LineUp(1)
 			case key.Matches(msg, m.keymap.Down):
-				if m.configCursor < len(m.configuredHosts)-1 {
+				if m.configCursor < totalItems-1 { // Stop at the last item
 					m.configCursor++
 				}
 				m.sshConfigViewport.LineDown(1)
@@ -874,45 +903,79 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.sshConfigViewport, vpCmd = m.sshConfigViewport.Update(msg)
 				cmds = append(cmds, vpCmd)
 			case key.Matches(msg, m.keymap.Remove):
-				if len(m.configuredHosts) > 0 && m.configCursor < len(m.configuredHosts) {
-					m.hostToRemove = &m.configuredHosts[m.configCursor]
+				// Only allow removing remote hosts (cursor > 0)
+				if m.configCursor > 0 && m.configCursor < totalItems {
+					remoteHostIndex := m.configCursor - 1 // Adjust index for configuredHosts slice
+					m.hostToRemove = &m.configuredHosts[remoteHostIndex]
 					m.currentState = stateSshConfigRemoveConfirm
 					m.lastError = nil
+				} else {
+					m.lastError = fmt.Errorf("cannot remove 'local' host")
 				}
 			case key.Matches(msg, m.keymap.Add):
+				// Add is always allowed, doesn't depend on selection
 				m.formInputs = createAddForm()
 				m.formFocusIndex = 0
 				m.formAuthMethod = authMethodAgent
 				m.formError = nil
 				m.currentState = stateSshConfigAddForm
 				m.formViewport.GotoTop()
-				// Apply initial focus style to the first input (Name)
 				if len(m.formInputs) > 0 {
 					m.formInputs[0].Prompt = cursorStyle.Render("> ")
 					m.formInputs[0].TextStyle = cursorStyle
 					cmds = append(cmds, m.formInputs[0].Focus())
 				}
 			case key.Matches(msg, m.keymap.Import):
-				m.currentState = stateLoadingProjects
+				// Import is always allowed
+				m.currentState = stateLoadingStacks // Show loading while parsing
 				m.importError = nil
 				m.lastError = nil
 				cmds = append(cmds, parseSshConfigCmd())
 			case key.Matches(msg, m.keymap.Edit):
-				if len(m.configuredHosts) > 0 && m.configCursor < len(m.configuredHosts) {
-					m.hostToEdit = &m.configuredHosts[m.configCursor]
+				// Only allow editing remote hosts (cursor > 0)
+				if m.configCursor > 0 && m.configCursor < totalItems {
+					remoteHostIndex := m.configCursor - 1 // Adjust index for configuredHosts slice
+					m.hostToEdit = &m.configuredHosts[remoteHostIndex]
 					m.formInputs, m.formAuthMethod, m.formDisabled = createEditForm(*m.hostToEdit)
 					m.formFocusIndex = 0
 					m.formError = nil
 					m.currentState = stateSshConfigEditForm
 					m.formViewport.GotoTop()
-					// Apply initial focus style to the first input (Name)
 					if len(m.formInputs) > 0 {
 						m.formInputs[0].Prompt = cursorStyle.Render("> ")
 						m.formInputs[0].TextStyle = cursorStyle
 						cmds = append(cmds, m.formInputs[0].Focus())
 					}
+				} else {
+					m.lastError = fmt.Errorf("cannot edit 'local' host")
+				}
+			case key.Matches(msg, m.keymap.PruneAction):
+				m.hostsToPrune = nil // Reset before setting
+				m.hostActionError = nil
+				m.lastError = nil
+
+				if m.configCursor == 0 {
+					// Target local host
+					m.hostsToPrune = []runner.HostTarget{{IsRemote: false, ServerName: "local"}}
+				} else if m.configCursor > 0 && m.configCursor < totalItems {
+					// Target the selected remote host
+					remoteHostIndex := m.configCursor - 1
+					host := m.configuredHosts[remoteHostIndex]
+					if !host.Disabled {
+						m.hostsToPrune = append(m.hostsToPrune, runner.HostTarget{IsRemote: true, HostConfig: &host, ServerName: host.Name})
+					} else {
+						m.lastError = fmt.Errorf("cannot prune disabled host: %s", host.Name)
+					}
+				} else {
+					m.lastError = fmt.Errorf("invalid selection for prune action")
+				}
+
+				// Proceed to confirmation only if a valid target was set and no error occurred
+				if len(m.hostsToPrune) > 0 && m.lastError == nil {
+					m.currentState = statePruneConfirm
 				}
 			}
+			// Update viewport only if no specific command was generated for it yet
 			if vpCmd == nil {
 				m.sshConfigViewport, vpCmd = m.sshConfigViewport.Update(msg)
 				cmds = append(cmds, vpCmd)
@@ -1063,6 +1126,34 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !isScrollKey {
 					cmds = append(cmds, m.handleSshImportDetailsFormKeys(msg)...)
 				}
+			} // <<< Add missing closing brace for the inner switch here
+
+		case statePruneConfirm:
+			switch {
+			case key.Matches(msg, m.keymap.Yes):
+				if len(m.hostsToPrune) > 0 {
+					// Add an initial message immediately
+					m.outputContent = statusStyle.Render(fmt.Sprintf("Initiating prune for %s...", m.hostsToPrune[0].ServerName)) + "\n"
+					m.currentState = stateRunningHostAction
+					m.hostActionError = nil
+					// For now, TUI only prunes one host at a time
+					step := runner.PruneHostStep(m.hostsToPrune[0])
+					m.currentHostActionStep = step // Store the step being run
+					// Ensure viewport shows the initial message before command starts
+					m.viewport.SetContent(m.outputContent)
+					m.viewport.GotoBottom()
+					cmds = append(cmds, runHostActionCmd(step))
+				} else {
+					// Should not happen, but reset state if it does
+					m.currentState = stateSshConfigList
+					m.lastError = fmt.Errorf("internal error: no hosts targeted for prune")
+				}
+			case key.Matches(msg, m.keymap.No), key.Matches(msg, m.keymap.Back):
+				m.currentState = stateSshConfigList
+				m.hostsToPrune = nil
+				m.lastError = nil
+			case key.Matches(msg, m.keymap.Quit):
+				return m, tea.Quit
 			}
 
 		default:
@@ -1129,15 +1220,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.formInputs = nil
 		cmds = append(cmds, loadSshConfigCmd())
 
-	case projectDiscoveredMsg:
-		if m.currentState == stateLoadingProjects {
-			m.currentState = stateProjectList
+	case stackDiscoveredMsg:
+		if m.currentState == stateLoadingStacks {
+			m.currentState = stateStackList
 		}
-		m.projects = append(m.projects, msg.project)
-		projID := msg.project.Identifier()
-		if !m.loadingStatus[projID] {
-			m.loadingStatus[projID] = true
-			cmds = append(cmds, fetchProjectStatusCmd(msg.project))
+		m.stacks = append(m.stacks, msg.stack)
+		stackID := msg.stack.Identifier()
+		if !m.loadingStatus[stackID] {
+			m.loadingStatus[stackID] = true
+			cmds = append(cmds, fetchStackStatusCmd(msg.stack))
 		}
 
 	case discoveryErrorMsg:
@@ -1146,14 +1237,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case discoveryFinishedMsg:
 		stateChanged := false
-		if m.currentState == stateLoadingProjects {
-			m.currentState = stateProjectList
+		if m.currentState == stateLoadingStacks {
+			m.currentState = stateStackList
 			stateChanged = true
-			if len(m.projects) == 0 {
+			if len(m.stacks) == 0 {
 				if len(m.discoveryErrors) == 0 {
-					m.lastError = fmt.Errorf("no projects found")
+					m.lastError = fmt.Errorf("no stacks found")
 				} else {
-					m.lastError = fmt.Errorf("discovery finished with errors, no projects found")
+					m.lastError = fmt.Errorf("discovery finished with errors, no stacks found")
 				}
 			} else {
 				m.lastError = nil
@@ -1164,24 +1255,24 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.isDiscovering = false
 
-		if stateChanged && m.currentState == stateProjectList {
+		if stateChanged && m.currentState == stateStackList {
 			listContent := strings.Builder{}
-			listContent.WriteString("Select a project:\n")
-			for i, project := range m.projects {
+			listContent.WriteString("Select a stack:\n")
+			for i, stack := range m.stacks {
 				cursor := "  "
 				if m.cursor == i {
 					cursor = cursorStyle.Render("> ")
 				}
-				projID := project.Identifier()
+				stackID := stack.Identifier()
 				statusStr := ""
-				if m.loadingStatus[projID] {
+				if m.loadingStatus[stackID] {
 					statusStr = statusLoadingStyle.Render(" [loading...]")
-				} else if _, ok := m.projectStatuses[projID]; ok {
-					statusStr = statusUpStyle.Render(" [loaded]")
+				} else if _, ok := m.stackStatuses[stackID]; ok {
+					// Status is loaded, determine how to display it later in View()
 				} else {
 					statusStr = statusLoadingStyle.Render(" [?]")
 				}
-				listContent.WriteString(fmt.Sprintf("%s%s (%s)%s\n", cursor, project.Name, serverNameStyle.Render(project.ServerName), statusStr))
+				listContent.WriteString(fmt.Sprintf("%s%s (%s)%s\n", cursor, stack.Name, serverNameStyle.Render(stack.ServerName), statusStr))
 			}
 			m.viewport.SetContent(listContent.String())
 			m.viewport.GotoTop()
@@ -1194,13 +1285,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.configuredHosts = msg.hosts
 			m.lastError = nil
 		}
-		if m.configCursor >= len(m.configuredHosts) {
-			m.configCursor = max(0, len(m.configuredHosts)-1)
+		// Ensure cursor stays within bounds (0 to len(hosts)) after loading
+		totalItems := len(m.configuredHosts) + 1
+		if m.configCursor >= totalItems {
+			m.configCursor = max(0, totalItems-1)
 		}
 
-	case projectStatusLoadedMsg:
-		m.loadingStatus[msg.projectIdentifier] = false
-		m.projectStatuses[msg.projectIdentifier] = msg.statusInfo
+	case stackStatusLoadedMsg:
+		m.loadingStatus[msg.stackIdentifier] = false
+		m.stackStatuses[msg.stackIdentifier] = msg.statusInfo
 
 	case stepFinishedMsg:
 		if m.currentState == stateSshConfigRemoveConfirm {
@@ -1228,18 +1321,41 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.outputContent += successStyle.Render("\n--- Action Sequence Completed Successfully ---") + "\n"
 					m.viewport.SetContent(m.outputContent)
 					m.viewport.GotoBottom()
-					for _, proj := range m.projectsInSequence {
-						if proj != nil {
-							projID := proj.Identifier()
-							if !m.loadingStatus[projID] {
-								m.loadingStatus[projID] = true
-								cmds = append(cmds, fetchProjectStatusCmd(*proj))
+					for _, stack := range m.stacksInSequence {
+						if stack != nil {
+							stackID := stack.Identifier()
+							if !m.loadingStatus[stackID] {
+								m.loadingStatus[stackID] = true
+								cmds = append(cmds, fetchStackStatusCmd(*stack))
 							}
 						}
 					}
 				} else {
 					cmds = append(cmds, m.startNextStepCmd())
 				}
+			}
+		} else if m.currentState == stateRunningHostAction {
+			// Handle host action completion
+			m.outputChan = nil
+			m.errorChan = nil
+			if msg.err != nil {
+				m.hostActionError = msg.err // Store specific host action error
+				m.lastError = msg.err       // Also update general lastError for display
+				m.currentState = stateSshConfigList
+				m.outputContent += errorStyle.Render(fmt.Sprintf("\n--- HOST ACTION '%s' FAILED: %v ---", m.currentHostActionStep.Name, msg.err)) + "\n"
+				m.viewport.SetContent(m.outputContent)
+				m.viewport.GotoBottom()
+				cmds = append(cmds, loadSshConfigCmd()) // Reload config state
+			} else {
+				// Success
+				m.outputContent += successStyle.Render(fmt.Sprintf("\n--- Host Action '%s' Completed Successfully ---", m.currentHostActionStep.Name)) + "\n"
+				m.viewport.SetContent(m.outputContent)
+				m.viewport.GotoBottom()
+				m.currentState = stateSshConfigList // Go back to list on success
+				m.hostsToPrune = nil
+				m.hostActionError = nil
+				m.lastError = nil                       // Clear last error on success
+				cmds = append(cmds, loadSshConfigCmd()) // Reload config state
 			}
 		}
 
@@ -1248,6 +1364,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.outputChan = msg.outChan
 			m.errorChan = msg.errChan
 			cmds = append(cmds, waitForOutputCmd(m.outputChan), waitForErrorCmd(m.errorChan))
+		} else if m.currentState == stateRunningHostAction {
+			m.outputChan = msg.outChan
+			m.errorChan = msg.errChan
+			// Use the same waitForOutputCmd, but need a way to distinguish error source if needed
+			// For now, stepFinishedMsg handles the final error.
+			cmds = append(cmds, waitForOutputCmd(m.outputChan), waitForErrorCmd(m.errorChan)) // Reusing waitForErrorCmd
 		}
 
 	case outputLineMsg:
@@ -1260,6 +1382,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.SetContent(m.outputContent)
 			m.viewport.GotoBottom()
 			cmds = append(cmds, waitForOutputCmd(m.outputChan))
+		} else if m.currentState == stateRunningHostAction && m.outputChan != nil {
+			// Append output for host action
+			if msg.line.IsError {
+				m.outputContent += errorStyle.Render(msg.line.Line) + "\n"
+			} else {
+				m.outputContent += msg.line.Line + "\n"
+			}
+			m.viewport.SetContent(m.outputContent)
+			m.viewport.GotoBottom()
+			cmds = append(cmds, waitForOutputCmd(m.outputChan)) // Continue waiting for output
 		}
 
 	case sshHostAddedMsg:
@@ -1307,7 +1439,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.currentState == stateProjectDetails && vpCmd == nil {
+	if m.currentState == stateStackDetails && vpCmd == nil {
 		m.detailsViewport, vpCmd = m.detailsViewport.Update(msg)
 		cmds = append(cmds, vpCmd)
 	}
@@ -1511,9 +1643,9 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 
 	numFocusable := 1 // Fixed Field: Remote Root
 	if authNeeded {
-		numFocusable++
+		numFocusable++ // Auth Method Selector
 		if m.formAuthMethod == authMethodKey || m.formAuthMethod == authMethodPassword {
-			numFocusable++
+			numFocusable++ // Key Path or Password Input
 		}
 	}
 
@@ -1700,11 +1832,7 @@ func (m *model) buildHostFromForm() (config.SSHHost, error) {
 		return host, fmt.Errorf("invalid authentication method selected")
 	}
 
-	for _, existingHost := range m.configuredHosts {
-		if existingHost.Name == host.Name {
-			return host, fmt.Errorf("host name '%s' already exists", host.Name)
-		}
-	}
+	// Note: Name conflict check is performed in saveNewSshHostCmd
 
 	return host, nil
 }
@@ -1718,23 +1846,21 @@ func (m *model) buildHostFromEditForm() (config.SSHHost, error) {
 
 	editedHost.Name = strings.TrimSpace(m.formInputs[0].Value())
 	if editedHost.Name == "" {
-		editedHost.Name = originalHost.Name
+		editedHost.Name = originalHost.Name // Keep original if empty
 	}
 
 	editedHost.Hostname = strings.TrimSpace(m.formInputs[1].Value())
 	if editedHost.Hostname == "" {
-		editedHost.Hostname = originalHost.Hostname
+		editedHost.Hostname = originalHost.Hostname // Keep original if empty
 	}
 
 	editedHost.User = strings.TrimSpace(m.formInputs[2].Value())
 	if editedHost.User == "" {
-		editedHost.User = originalHost.User
+		editedHost.User = originalHost.User // Keep original if empty
 	}
 
 	editedHost.RemoteRoot = strings.TrimSpace(m.formInputs[4].Value())
-	if editedHost.RemoteRoot == "" {
-		editedHost.RemoteRoot = originalHost.RemoteRoot
-	}
+	// Allow empty RemoteRoot to clear it
 
 	if editedHost.Name == "" {
 		return editedHost, fmt.Errorf("name cannot be empty")
@@ -1748,14 +1874,14 @@ func (m *model) buildHostFromEditForm() (config.SSHHost, error) {
 
 	portStr := strings.TrimSpace(m.formInputs[3].Value())
 	if portStr == "" {
-		editedHost.Port = 0
+		editedHost.Port = 0 // Default port
 	} else {
 		port, err := strconv.Atoi(portStr)
 		if err != nil || port < 1 || port > 65535 {
 			return editedHost, fmt.Errorf("invalid port number: %s", portStr)
 		}
 		if port == 22 {
-			editedHost.Port = 0
+			editedHost.Port = 0 // Store 0 for default port 22
 		} else {
 			editedHost.Port = port
 		}
@@ -1767,16 +1893,19 @@ func (m *model) buildHostFromEditForm() (config.SSHHost, error) {
 	switch m.formAuthMethod {
 	case authMethodKey:
 		if keyPathInput == "" {
-			editedHost.KeyPath = originalHost.KeyPath
+			// If input is empty, keep original key path if it existed
+			if originalHost.KeyPath != "" && originalHost.Password == "" {
+				editedHost.KeyPath = originalHost.KeyPath
+			} else {
+				return editedHost, fmt.Errorf("key path is required for Key File authentication")
+			}
 		} else {
 			editedHost.KeyPath = keyPathInput
 		}
-		if editedHost.KeyPath == "" {
-			return editedHost, fmt.Errorf("key path is required for Key File authentication")
-		}
-		editedHost.Password = ""
+		editedHost.Password = "" // Clear password if key is set
 	case authMethodPassword:
 		if passwordInput == "" {
+			// If input is empty, keep original password if it existed and no key was set
 			if originalHost.Password != "" && originalHost.KeyPath == "" {
 				editedHost.Password = originalHost.Password
 			} else {
@@ -1785,10 +1914,7 @@ func (m *model) buildHostFromEditForm() (config.SSHHost, error) {
 		} else {
 			editedHost.Password = passwordInput
 		}
-		if editedHost.Password == "" {
-			return editedHost, fmt.Errorf("password is required for Password authentication")
-		}
-		editedHost.KeyPath = ""
+		editedHost.KeyPath = "" // Clear key path if password is set
 	case authMethodAgent:
 		editedHost.KeyPath = ""
 		editedHost.Password = ""
@@ -1796,20 +1922,14 @@ func (m *model) buildHostFromEditForm() (config.SSHHost, error) {
 		return editedHost, fmt.Errorf("invalid authentication method selected")
 	}
 
-	if editedHost.Name != originalHost.Name {
-		for _, existingHost := range m.configuredHosts {
-			if existingHost.Name != originalHost.Name && existingHost.Name == editedHost.Name {
-				return editedHost, fmt.Errorf("host name '%s' already exists", editedHost.Name)
-			}
-		}
-	}
+	// Note: Name conflict check is performed in saveEditedSshHostCmd
 
 	editedHost.Disabled = m.formDisabled
 
 	return editedHost, nil
 }
 
-func (m *model) handleProjectListKeys(msg tea.KeyMsg) []tea.Cmd {
+func (m *model) handleStackListKeys(msg tea.KeyMsg) []tea.Cmd {
 	var cmds []tea.Cmd
 	var vpCmd tea.Cmd
 	cursorMoved := false
@@ -1823,7 +1943,7 @@ func (m *model) handleProjectListKeys(msg tea.KeyMsg) []tea.Cmd {
 		m.viewport, vpCmd = m.viewport.Update(msg)
 		cmds = append(cmds, vpCmd)
 	case key.Matches(msg, m.keymap.Down):
-		if m.cursor < len(m.projects)-1 {
+		if m.cursor < len(m.stacks)-1 {
 			m.cursor++
 			cursorMoved = true
 		}
@@ -1836,7 +1956,7 @@ func (m *model) handleProjectListKeys(msg tea.KeyMsg) []tea.Cmd {
 			m.viewport.GotoTop()
 		}
 	case key.Matches(msg, m.keymap.End):
-		lastIdx := len(m.projects) - 1
+		lastIdx := len(m.stacks) - 1
 		if lastIdx >= 0 && m.cursor != lastIdx {
 			m.cursor = lastIdx
 			cursorMoved = true
@@ -1851,7 +1971,7 @@ func (m *model) handleProjectListKeys(msg tea.KeyMsg) []tea.Cmd {
 		m.viewport.ViewUp()
 	case key.Matches(msg, m.keymap.PgDown):
 		m.cursor += m.viewport.Height
-		lastIdx := len(m.projects) - 1
+		lastIdx := len(m.stacks) - 1
 		if lastIdx >= 0 && m.cursor > lastIdx {
 			m.cursor = lastIdx
 		}
@@ -1860,11 +1980,11 @@ func (m *model) handleProjectListKeys(msg tea.KeyMsg) []tea.Cmd {
 	default:
 		switch {
 		case key.Matches(msg, m.keymap.Select):
-			if len(m.projects) > 0 && m.cursor < len(m.projects) {
-				if _, ok := m.selectedProjectIdxs[m.cursor]; ok {
-					delete(m.selectedProjectIdxs, m.cursor)
+			if len(m.stacks) > 0 && m.cursor < len(m.stacks) {
+				if _, ok := m.selectedStackIdxs[m.cursor]; ok {
+					delete(m.selectedStackIdxs, m.cursor)
 				} else {
-					m.selectedProjectIdxs[m.cursor] = struct{}{}
+					m.selectedStackIdxs[m.cursor] = struct{}{}
 				}
 			}
 		case key.Matches(msg, m.keymap.UpAction):
@@ -1873,81 +1993,83 @@ func (m *model) handleProjectListKeys(msg tea.KeyMsg) []tea.Cmd {
 			cmds = append(cmds, m.runSequenceOnSelection(runner.DownSequence)...)
 		case key.Matches(msg, m.keymap.RefreshAction):
 			cmds = append(cmds, m.runSequenceOnSelection(runner.RefreshSequence)...)
+		case key.Matches(msg, m.keymap.PullAction):
+			cmds = append(cmds, m.runSequenceOnSelection(runner.PullSequence)...)
 		case key.Matches(msg, m.keymap.Enter):
-			if len(m.selectedProjectIdxs) > 0 {
-				m.projectsInSequence = []*discovery.Project{}
-				for idx := range m.selectedProjectIdxs {
-					if idx >= 0 && idx < len(m.projects) {
-						proj := m.projects[idx]
-						m.projectsInSequence = append(m.projectsInSequence, &proj)
-						projID := proj.Identifier()
-						if _, loaded := m.projectStatuses[projID]; !loaded && !m.loadingStatus[projID] {
-							m.loadingStatus[projID] = true
-							cmds = append(cmds, fetchProjectStatusCmd(proj))
+			if len(m.selectedStackIdxs) > 0 {
+				m.stacksInSequence = []*discovery.Stack{}
+				for idx := range m.selectedStackIdxs {
+					if idx >= 0 && idx < len(m.stacks) {
+						stack := m.stacks[idx]
+						m.stacksInSequence = append(m.stacksInSequence, &stack)
+						stackID := stack.Identifier()
+						if _, loaded := m.stackStatuses[stackID]; !loaded && !m.loadingStatus[stackID] {
+							m.loadingStatus[stackID] = true
+							cmds = append(cmds, fetchStackStatusCmd(stack))
 						}
 					}
 				}
-				m.detailedProject = nil
-				m.selectedProjectIdxs = make(map[int]struct{})
-				m.currentState = stateProjectDetails
-			} else if len(m.projects) > 0 && m.cursor < len(m.projects) {
-				m.detailedProject = &m.projects[m.cursor]
-				m.projectsInSequence = nil
-				m.currentState = stateProjectDetails
-				projID := m.detailedProject.Identifier()
-				if !m.loadingStatus[projID] {
-					m.loadingStatus[projID] = true
-					cmds = append(cmds, fetchProjectStatusCmd(*m.detailedProject))
+				m.detailedStack = nil
+				m.selectedStackIdxs = make(map[int]struct{})
+				m.currentState = stateStackDetails
+			} else if len(m.stacks) > 0 && m.cursor < len(m.stacks) {
+				m.detailedStack = &m.stacks[m.cursor]
+				m.stacksInSequence = nil
+				m.currentState = stateStackDetails
+				stackID := m.detailedStack.Identifier()
+				if !m.loadingStatus[stackID] {
+					m.loadingStatus[stackID] = true
+					cmds = append(cmds, fetchStackStatusCmd(*m.detailedStack))
 				}
 			}
 		}
 	}
 
-	if cursorMoved && len(m.projects) > 0 {
-		selectedProject := m.projects[m.cursor]
-		projID := selectedProject.Identifier()
-		if _, loaded := m.projectStatuses[projID]; !loaded && !m.loadingStatus[projID] {
-			m.loadingStatus[projID] = true
-			cmds = append(cmds, fetchProjectStatusCmd(selectedProject))
+	if cursorMoved && len(m.stacks) > 0 {
+		selectedStack := m.stacks[m.cursor]
+		stackID := selectedStack.Identifier()
+		if _, loaded := m.stackStatuses[stackID]; !loaded && !m.loadingStatus[stackID] {
+			m.loadingStatus[stackID] = true
+			cmds = append(cmds, fetchStackStatusCmd(selectedStack))
 		}
 	}
 
 	return cmds
 }
 
-func (m *model) runSequenceOnSelection(sequenceFunc func(discovery.Project) []runner.CommandStep) []tea.Cmd {
+func (m *model) runSequenceOnSelection(sequenceFunc func(discovery.Stack) []runner.CommandStep) []tea.Cmd {
 	var cmds []tea.Cmd
-	var projectsToRun []*discovery.Project
+	var stacksToRun []*discovery.Stack
 	var combinedSequence []runner.CommandStep
-	m.projectsInSequence = nil
+	m.stacksInSequence = nil
 
-	if len(m.selectedProjectIdxs) > 0 {
-		for idx := range m.selectedProjectIdxs {
-			if idx >= 0 && idx < len(m.projects) {
-				projectsToRun = append(projectsToRun, &m.projects[idx])
+	if len(m.selectedStackIdxs) > 0 {
+		for idx := range m.selectedStackIdxs {
+			if idx >= 0 && idx < len(m.stacks) {
+				stacksToRun = append(stacksToRun, &m.stacks[idx])
 			}
 		}
-		m.selectedProjectIdxs = make(map[int]struct{})
-	} else if len(m.projects) > 0 && m.cursor < len(m.projects) {
-		projectsToRun = append(projectsToRun, &m.projects[m.cursor])
+		m.selectedStackIdxs = make(map[int]struct{})
+	} else if len(m.stacks) > 0 && m.cursor < len(m.stacks) {
+		stacksToRun = append(stacksToRun, &m.stacks[m.cursor])
 	}
 
-	if len(projectsToRun) == 0 {
+	if len(stacksToRun) == 0 {
 		return cmds
 	}
 
-	m.projectsInSequence = projectsToRun
-	for _, projPtr := range projectsToRun {
-		if projPtr != nil {
-			combinedSequence = slices.Concat(combinedSequence, sequenceFunc(*projPtr))
+	m.stacksInSequence = stacksToRun
+	for _, stackPtr := range stacksToRun {
+		if stackPtr != nil {
+			combinedSequence = slices.Concat(combinedSequence, sequenceFunc(*stackPtr))
 		}
 	}
 
 	if len(combinedSequence) > 0 {
-		if len(projectsToRun) > 0 && projectsToRun[0] != nil {
-			m.sequenceProject = projectsToRun[0]
+		if len(stacksToRun) > 0 && stacksToRun[0] != nil {
+			m.sequenceStack = stacksToRun[0] // Use the first selected stack for display purposes
 		} else {
-			m.sequenceProject = nil
+			m.sequenceStack = nil
 		}
 		m.currentSequence = combinedSequence
 		m.currentState = stateRunningSequence
@@ -1966,16 +2088,16 @@ func (m *model) startNextStepCmd() tea.Cmd {
 		return nil
 	}
 	step := m.currentSequence[m.currentStepIndex]
-	m.outputContent += stepStyle.Render(fmt.Sprintf("\n--- Starting Step: %s for %s ---", step.Name, step.Project.Identifier())) + "\n"
+	m.outputContent += stepStyle.Render(fmt.Sprintf("\n--- Starting Step: %s for %s ---", step.Name, step.Stack.Identifier())) + "\n"
 	m.viewport.SetContent(m.outputContent)
 	m.viewport.GotoBottom()
 	return runStepCmd(step)
 }
 
-func (m *model) renderProjectStatus(b *strings.Builder, proj *discovery.Project, projID string) {
+func (m *model) renderStackStatus(b *strings.Builder, stackID string) {
 	statusStr := ""
-	statusInfo, loaded := m.projectStatuses[projID]
-	isLoading := m.loadingStatus[projID]
+	statusInfo, loaded := m.stackStatuses[stackID]
+	isLoading := m.loadingStatus[stackID]
 
 	if isLoading {
 		statusStr = statusLoadingStyle.Render(" [loading...]")
@@ -2016,21 +2138,21 @@ func (m *model) renderProjectStatus(b *strings.Builder, proj *discovery.Project,
 	}
 }
 
-func (m *model) View() string {
+func (m model) View() string { // Changed receiver from *model to model
 	if !m.ready {
 		return "Initializing..."
 	}
 	var header, bodyStr, footerStr string
-	header = titleStyle.Render("Bucket Manager TUI") + "\n"
+	header = titleStyle.Render("Bucket Manager") + "\n"
 	bodyContent := strings.Builder{}
 
 	footerContent := strings.Builder{}
 	footerContent.WriteString("\n")
 
 	switch m.currentState {
-	case stateProjectList:
+	case stateStackList:
 		if m.isDiscovering {
-			footerContent.WriteString(statusLoadingStyle.Render("Discovering remote projects...") + "\n")
+			footerContent.WriteString(statusLoadingStyle.Render("Discovering remote stacks...") + "\n")
 		}
 		if len(m.discoveryErrors) > 0 {
 			footerContent.WriteString(errorStyle.Render("Discovery Errors:"))
@@ -2043,29 +2165,30 @@ func (m *model) View() string {
 		}
 
 		help := strings.Builder{}
-		if len(m.selectedProjectIdxs) > 0 {
-			help.WriteString(fmt.Sprintf("(%d selected) ", len(m.selectedProjectIdxs)))
+		if len(m.selectedStackIdxs) > 0 {
+			help.WriteString(fmt.Sprintf("(%d selected) ", len(m.selectedStackIdxs)))
 		}
 		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + ": navigate | ")
 		help.WriteString(m.keymap.Select.Help().Key + ": " + m.keymap.Select.Help().Desc + " | ")
 		help.WriteString(m.keymap.Enter.Help().Key + ": details | ")
 		help.WriteString(m.keymap.UpAction.Help().Key + ": up | ")
 		help.WriteString(m.keymap.DownAction.Help().Key + ": down | ")
-		help.WriteString(m.keymap.RefreshAction.Help().Key + ": refresh")
+		help.WriteString(m.keymap.RefreshAction.Help().Key + ": refresh | ")
+		help.WriteString(m.keymap.PullAction.Help().Key + ": pull")
 		help.WriteString(" | ")
 		help.WriteString(m.keymap.Config.Help().Key + ": " + m.keymap.Config.Help().Desc + " | ")
 		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
 		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
 
 	case stateRunningSequence:
-		projectIdentifier := ""
-		if m.sequenceProject != nil {
-			projectIdentifier = fmt.Sprintf(" for %s", m.sequenceProject.Identifier())
+		stackIdentifier := ""
+		if m.sequenceStack != nil {
+			stackIdentifier = fmt.Sprintf(" for %s", m.sequenceStack.Identifier())
 		}
 		if m.currentSequence != nil && m.currentStepIndex < len(m.currentSequence) {
-			footerContent.WriteString(statusStyle.Render(fmt.Sprintf("Running step %d/%d%s: %s...", m.currentStepIndex+1, len(m.currentSequence), projectIdentifier, m.currentSequence[m.currentStepIndex].Name)))
-		} else if m.sequenceProject != nil {
-			footerContent.WriteString(successStyle.Render(fmt.Sprintf("Sequence finished successfully%s.", projectIdentifier)))
+			footerContent.WriteString(statusStyle.Render(fmt.Sprintf("Running step %d/%d%s: %s...", m.currentStepIndex+1, len(m.currentSequence), stackIdentifier, m.currentSequence[m.currentStepIndex].Name)))
+		} else if m.sequenceStack != nil {
+			footerContent.WriteString(successStyle.Render(fmt.Sprintf("Sequence finished successfully%s.", stackIdentifier)))
 		} else {
 			footerContent.WriteString(successStyle.Render("Sequence finished successfully."))
 		}
@@ -2076,14 +2199,14 @@ func (m *model) View() string {
 		footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
 
 	case stateSequenceError:
-		projectIdentifier := ""
-		if m.sequenceProject != nil {
-			projectIdentifier = fmt.Sprintf(" for %s", m.sequenceProject.Identifier())
+		stackIdentifier := ""
+		if m.sequenceStack != nil {
+			stackIdentifier = fmt.Sprintf(" for %s", m.sequenceStack.Identifier())
 		}
 		if m.lastError != nil {
-			footerContent.WriteString(errorStyle.Render(fmt.Sprintf("Error%s: %v", projectIdentifier, m.lastError)))
+			footerContent.WriteString(errorStyle.Render(fmt.Sprintf("Error%s: %v", stackIdentifier, m.lastError)))
 		} else {
-			footerContent.WriteString(errorStyle.Render(fmt.Sprintf("An unknown error occurred%s.", projectIdentifier)))
+			footerContent.WriteString(errorStyle.Render(fmt.Sprintf("An unknown error occurred%s.", stackIdentifier)))
 		}
 		help := strings.Builder{}
 		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.PgUp.Help().Key + "/" + m.keymap.PgDown.Help().Key + ": scroll | ")
@@ -2091,7 +2214,7 @@ func (m *model) View() string {
 		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
 		footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
 
-	case stateProjectDetails:
+	case stateStackDetails:
 		help := strings.Builder{}
 		help.WriteString(m.keymap.Back.Help().Key + ": back to list | ")
 		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
@@ -2100,20 +2223,31 @@ func (m *model) View() string {
 	case stateSshConfigList:
 		help := strings.Builder{}
 		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + ": navigate | ")
-		help.WriteString(m.keymap.Add.Help().Key + ": " + m.keymap.Add.Help().Desc + " | ")
-		help.WriteString(m.keymap.Edit.Help().Key + ": " + m.keymap.Edit.Help().Desc + " | ")
-		help.WriteString(m.keymap.Remove.Help().Key + ": " + m.keymap.Remove.Help().Desc + " | ")
-		help.WriteString(m.keymap.Import.Help().Key + ": " + m.keymap.Import.Help().Desc + " | ")
+		// Show actions based on selection
+		if m.configCursor == 0 { // "local" selected
+			// Local only allows Prune
+			help.WriteString(m.keymap.PruneAction.Help().Key + ": prune | ")
+		} else { // Remote host selected
+			// Remote allows Edit, Remove, Prune
+			help.WriteString(m.keymap.Edit.Help().Key + ": edit | ")
+			help.WriteString(m.keymap.Remove.Help().Key + ": remove | ")
+			help.WriteString(m.keymap.PruneAction.Help().Key + ": prune | ")
+		}
+		// Add and Import are always available regardless of selection
+		help.WriteString(m.keymap.Add.Help().Key + ": add | ")
+		help.WriteString(m.keymap.Import.Help().Key + ": import | ")
 		help.WriteString(m.keymap.Back.Help().Key + ": back | ")
 		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
 
 		errorOrInfo := ""
-		if m.importInfoMsg != "" {
+		if m.hostActionError != nil { // Display host action error if present
+			errorOrInfo = "\n" + errorStyle.Render(fmt.Sprintf("Prune Error: %v", m.hostActionError))
+		} else if m.importInfoMsg != "" {
 			errorOrInfo = "\n" + successStyle.Render(m.importInfoMsg)
 		} else if m.importError != nil {
 			errorOrInfo = "\n" + errorStyle.Render(fmt.Sprintf("Import Error: %v", m.importError))
-		} else if m.lastError != nil && strings.Contains(m.lastError.Error(), "ssh config") {
-			errorOrInfo = "\n" + errorStyle.Render(fmt.Sprintf("Config Error: %v", m.lastError))
+		} else if m.lastError != nil { // Display general errors if no specific import/prune error
+			errorOrInfo = "\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.lastError))
 		}
 
 		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
@@ -2125,6 +2259,19 @@ func (m *model) View() string {
 		help := strings.Builder{}
 		if m.hostToRemove != nil {
 			help.WriteString(fmt.Sprintf("Confirm removal of '%s'? ", identifierColor.Render(m.hostToRemove.Name)))
+			help.WriteString(m.keymap.Yes.Help().Key + ": " + m.keymap.Yes.Help().Desc + " | ")
+			help.WriteString(m.keymap.No.Help().Key + "/" + m.keymap.Back.Help().Key + ": " + m.keymap.No.Help().Desc + "/cancel")
+		} else {
+			help.WriteString(errorStyle.Render("Error - no host selected. "))
+			help.WriteString(m.keymap.Back.Help().Key + ": back")
+		}
+		footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
+	case statePruneConfirm:
+		help := strings.Builder{}
+		if len(m.hostsToPrune) > 0 {
+			targetName := m.hostsToPrune[0].ServerName // TUI currently only prunes one host
+			help.WriteString(fmt.Sprintf("Confirm prune action for host '%s'? ", identifierColor.Render(targetName)))
 			help.WriteString(m.keymap.Yes.Help().Key + ": " + m.keymap.Yes.Help().Desc + " | ")
 			help.WriteString(m.keymap.No.Help().Key + "/" + m.keymap.Back.Help().Key + ": " + m.keymap.No.Help().Desc + "/cancel")
 		} else {
@@ -2198,27 +2345,27 @@ func (m *model) View() string {
 	}
 
 	switch m.currentState {
-	case stateLoadingProjects:
-		bodyContent.WriteString(statusStyle.Render("Loading projects..."))
-	case stateProjectList:
+	case stateLoadingStacks:
+		bodyContent.WriteString(statusStyle.Render("Loading stacks..."))
+	case stateStackList:
 		listContent := strings.Builder{}
-		listContent.WriteString("Select a project:\n")
-		for i, project := range m.projects {
+		listContent.WriteString("Select a stack:\n")
+		for i, stack := range m.stacks {
 			cursor := "  "
 			if m.cursor == i {
 				cursor = cursorStyle.Render("> ")
 			}
 
 			checkbox := "[ ]"
-			if _, selected := m.selectedProjectIdxs[i]; selected {
+			if _, selected := m.selectedStackIdxs[i]; selected {
 				checkbox = successStyle.Render("[x]")
 			}
 
-			projID := project.Identifier()
+			stackID := stack.Identifier()
 			statusStr := ""
-			if m.loadingStatus[projID] {
+			if m.loadingStatus[stackID] {
 				statusStr = statusLoadingStyle.Render(" [loading...]")
-			} else if statusInfo, ok := m.projectStatuses[projID]; ok {
+			} else if statusInfo, ok := m.stackStatuses[stackID]; ok {
 				switch statusInfo.OverallStatus {
 				case runner.StatusUp:
 					statusStr = statusUpStyle.Render(" [UP]")
@@ -2234,7 +2381,7 @@ func (m *model) View() string {
 			} else {
 				statusStr = statusLoadingStyle.Render(" [?]")
 			}
-			listContent.WriteString(fmt.Sprintf("%s%s %s (%s)%s\n", cursor, checkbox, project.Name, serverNameStyle.Render(project.ServerName), statusStr))
+			listContent.WriteString(fmt.Sprintf("%s%s %s (%s)%s\n", cursor, checkbox, stack.Name, serverNameStyle.Render(stack.ServerName), statusStr))
 		}
 		m.viewport.Height = availableHeight
 		m.viewport.SetContent(listContent.String())
@@ -2242,39 +2389,49 @@ func (m *model) View() string {
 	case stateRunningSequence, stateSequenceError:
 		m.viewport.Height = availableHeight
 		bodyStr = m.viewport.View()
-	case stateProjectDetails:
-		if m.detailedProject != nil {
-			proj := m.detailedProject
-			projID := proj.Identifier()
-			bodyContent.WriteString(titleStyle.Render(fmt.Sprintf("Details for: %s (%s)", proj.Name, serverNameStyle.Render(proj.ServerName))) + "\n\n")
-			m.renderProjectStatus(&bodyContent, proj, projID)
-		} else if len(m.projectsInSequence) > 0 {
-			bodyContent.WriteString(titleStyle.Render(fmt.Sprintf("Details for %d Selected Projects:", len(m.projectsInSequence))) + "\n")
-			for i, proj := range m.projectsInSequence {
-				if proj == nil {
+	case stateStackDetails:
+		if m.detailedStack != nil {
+			stack := m.detailedStack
+			stackID := stack.Identifier()
+			bodyContent.WriteString(titleStyle.Render(fmt.Sprintf("Details for: %s (%s)", stack.Name, serverNameStyle.Render(stack.ServerName))) + "\n\n")
+			m.renderStackStatus(&bodyContent, stackID)
+		} else if len(m.stacksInSequence) > 0 {
+			bodyContent.WriteString(titleStyle.Render(fmt.Sprintf("Details for %d Selected Stacks:", len(m.stacksInSequence))) + "\n")
+			for i, stack := range m.stacksInSequence {
+				if stack == nil {
 					continue
 				}
-				projID := proj.Identifier()
-				bodyContent.WriteString(fmt.Sprintf("\n--- %s (%s) ---", proj.Name, serverNameStyle.Render(proj.ServerName)))
-				m.renderProjectStatus(&bodyContent, proj, projID)
-				if i < len(m.projectsInSequence)-1 {
+				stackID := stack.Identifier()
+				bodyContent.WriteString(fmt.Sprintf("\n--- %s (%s) ---", stack.Name, serverNameStyle.Render(stack.ServerName)))
+				m.renderStackStatus(&bodyContent, stackID)
+				if i < len(m.stacksInSequence)-1 {
 					bodyContent.WriteString("\n")
 				}
 			}
 		} else {
-			bodyContent.WriteString(errorStyle.Render("Error: No project selected for details."))
+			bodyContent.WriteString(errorStyle.Render("Error: No stack selected for details."))
 		}
 		m.detailsViewport.Height = availableHeight
 		m.detailsViewport.SetContent(bodyContent.String())
 		bodyStr = m.detailsViewport.View()
 	case stateSshConfigList:
-		bodyContent.WriteString("Configured SSH Hosts:\n")
+		bodyContent.WriteString("Configured Hosts:\n\n")
+
+		// Display "local" entry first
+		localCursor := "  "
+		if m.configCursor == 0 {
+			localCursor = cursorStyle.Render("> ")
+		}
+		bodyContent.WriteString(fmt.Sprintf("%s%s (%s)\n", localCursor, "local", serverNameStyle.Render("Local Docker/Podman")))
+
+		// Display configured remote hosts
 		if len(m.configuredHosts) == 0 {
-			bodyContent.WriteString("\n  (No SSH hosts configured yet)")
+			bodyContent.WriteString("\n  (No remote SSH hosts configured yet)")
 		} else {
 			for i, host := range m.configuredHosts {
 				cursor := "  "
-				if m.configCursor == i {
+				// Adjust cursor check for remote hosts (index starts from 1 in the view)
+				if m.configCursor == i+1 {
 					cursor = cursorStyle.Render("> ")
 				}
 				details := fmt.Sprintf("%s@%s", host.User, host.Hostname)
@@ -2294,8 +2451,9 @@ func (m *model) View() string {
 				bodyContent.WriteString(fmt.Sprintf("%s%s (%s)%s%s\n", cursor, host.Name, serverNameStyle.Render(details), remoteRootStr, status))
 			}
 		}
-		if m.lastError != nil && strings.Contains(m.lastError.Error(), "ssh config") {
-			bodyContent.WriteString("\n" + errorStyle.Render(fmt.Sprintf("Config Error: %v", m.lastError)))
+		// Display general errors at the bottom if they exist and aren't specific import/prune errors handled in footer
+		if m.lastError != nil && m.importError == nil && m.hostActionError == nil {
+			bodyContent.WriteString("\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.lastError)))
 		}
 		m.sshConfigViewport.Height = availableHeight
 		m.sshConfigViewport.SetContent(bodyContent.String())
@@ -2308,6 +2466,41 @@ func (m *model) View() string {
 			bodyContent.WriteString(errorStyle.Render("Error: No host selected for removal. Press Esc/b to go back."))
 		}
 		bodyStr = lipgloss.PlaceVertical(availableHeight, lipgloss.Top, bodyContent.String())
+
+	case statePruneConfirm:
+		if len(m.hostsToPrune) > 0 {
+			targetName := m.hostsToPrune[0].ServerName
+			bodyContent.WriteString(fmt.Sprintf("Are you sure you want to run 'podman system prune -af' on host '%s'?\n\n", identifierColor.Render(targetName)))
+			bodyContent.WriteString("This will remove all unused containers, networks, images, and build cache.\n\n")
+			bodyContent.WriteString("[y] Yes, prune | [n/Esc/b] No, cancel")
+		} else {
+			bodyContent.WriteString(errorStyle.Render("Error: No host selected for prune. Press Esc/b to go back."))
+		}
+		bodyStr = lipgloss.PlaceVertical(availableHeight, lipgloss.Top, bodyContent.String())
+
+	case stateRunningHostAction:
+		// Display output similar to stateRunningSequence
+		m.viewport.Height = availableHeight
+		bodyStr = m.viewport.View() // Viewport already contains output content
+
+		// --- Explicitly build footer for this state ---
+		runningFooter := strings.Builder{}
+		targetName := "unknown host"
+		if len(m.hostsToPrune) > 0 {
+			targetName = m.hostsToPrune[0].ServerName
+		}
+		// Add the status line
+		runningFooter.WriteString("\n" + statusStyle.Render(fmt.Sprintf("Running prune action on '%s'...", identifierColor.Render(targetName))))
+
+		// Add basic help line
+		help := strings.Builder{}
+		help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.PgUp.Help().Key + "/" + m.keymap.PgDown.Help().Key + ": scroll | ")
+		help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+		runningFooter.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
+
+		// --- Assign directly to footerStr, overriding the default footer building ---
+		footerStr = runningFooter.String()
+
 	case stateSshConfigAddForm:
 		bodyContent.WriteString(titleStyle.Render("Add New SSH Host") + "\n\n")
 		for i := 0; i < 5; i++ {
@@ -2429,7 +2622,7 @@ func (m *model) View() string {
 			if m.formFocusIndex == 5 {
 				authFocus = cursorStyle.Render("> ")
 				authStyle = cursorStyle
-			} // Inlined getAuthMethodFocusIndex
+			}
 			authMethodStr := ""
 			switch m.formAuthMethod {
 			case authMethodKey:
@@ -2452,7 +2645,7 @@ func (m *model) View() string {
 			if m.formFocusIndex == 8 {
 				disabledFocus = cursorStyle.Render("> ")
 				disabledStyle = cursorStyle
-			} // Inlined getDisabledToggleFocusIndex
+			}
 			checkbox := "[ ]"
 			if m.formDisabled {
 				checkbox = successStyle.Render("[x]")

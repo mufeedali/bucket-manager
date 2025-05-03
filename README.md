@@ -9,6 +9,8 @@ A command-line interface (CLI) and Text User Interface (TUI) to discover and man
 - Manage SSH host configurations (add, edit, list, remove, import from `~/.ssh/config`).
 - View stack status (Up, Down, Partial, Error) for local and remote stacks.
 - Run common `podman compose` actions (`up`, `down`, `pull`, `refresh`) on individual or multiple selected stacks (local or remote).
+- Run `podman system prune -af` on local or remote hosts (`prune`).
+- Pull latest images for stacks (`pull`).
 - Interactive TUI for easy navigation and management.
 - CLI for scripting and quick actions.
 - Shell completion support (bash, zsh, fish, powershell).
@@ -42,19 +44,19 @@ The single `bm` binary provides both a Command-Line Interface (CLI) and a Text U
 
 ### Stack Identifier Format
 
-Commands like `up`, `down`, `refresh`, and `status` accept a `<stack-identifier>` argument to target specific stacks. This identifier can take several forms:
+Commands like `up`, `down`, `refresh`, `pull`, and `status` accept a `<stack-identifier>` argument to target specific stacks. This identifier can take several forms:
 
-1.  **`server-name:stack-name`**: This is the most explicit format for remote stacks.
+1.  **`server-name:stack-name`**: This is the most explicit format.
     - Use `local:stack-name` to target a stack named `stack-name` on the local machine.
     - Use `remote-host-name:stack-name` to target a stack named `stack-name` on the configured SSH host `remote-host-name`.
     - This format guarantees targeting a single, specific stack instance.
 
 2.  **`stack-name`**: When only the stack name is provided (e.g., `bm status my-app`, `bm up my-app`), `bm` follows this logic to find the target stack:
-    - It searches the local stack directory first.
-    - If one or more stacks named `stack-name` are found locally, the **first local match** is targeted. Remote hosts are *not* searched.
-    - If *no* stack named `stack-name` is found locally, it then searches all configured remote hosts.
-    - If `stack-name` is found on exactly *one* remote host, that stack is targeted.
-    - If `stack-name` is found on *multiple* remote hosts (but not locally), an ambiguity error is reported, and you must use the explicit `server-name:stack-name` format.
+    - It searches for stacks matching `stack-name` both locally and on all configured remote hosts.
+    - If exactly *one* match is found (either local or remote), that stack is targeted.
+    - If *multiple* matches are found, `bm` attempts to resolve the ambiguity:
+        - If *exactly one* of the matches is local, the local stack is preferred and targeted.
+        - Otherwise (multiple local matches, or multiple remote matches and no local match), an ambiguity error is reported, and you must use the explicit `server-name:stack-name` format (e.g., `local:stack-name` or `remote-host:stack-name`).
     - If `stack-name` is not found locally or on any remote host, a "not found" error is reported.
 
 3.  **`server-name:`** (Note the trailing colon): Used *only* with the `bm status` command to show the status of *all* stacks on a specific remote host (e.g., `bm status server1:`).
@@ -102,7 +104,11 @@ By default, `bm` searches for local stacks in `~/bucket` and `~/compose-bucket`.
 - `bm down <stack-identifier>`:
     - Runs `podman compose down` for the specified stack (local or remote).
     - Use the identifier format. Tab completion is available.
-
+   
+- `bm pull <stack-identifier>`:
+    - Runs `podman compose pull` for the specified stack (local or remote).
+    - Use the identifier format. Tab completion is available.
+   
 - `bm refresh <stack-identifier>` (alias: `bm re ...`):
     - Performs a full refresh cycle: `pull`, `down`, `up -d`.
     - If the stack is local, it also runs `podman system prune -af`.
@@ -117,13 +123,20 @@ By default, `bm` searches for local stacks in `~/bucket` and `~/compose-bucket`.
 
 - `bm config ...`: (See [Configuration](#configuration) section above)
 
+- `bm prune [host-identifier...]`:
+    - Runs `podman system prune -af` on the specified hosts.
+    - If no host identifiers are provided, it targets the **local host AND all configured remote hosts**.
+    - Provide `local` to target only the local system.
+    - Provide specific remote host names (e.g., `server1 server2`) to target only those hosts.
+    - Tab completion is available for host identifiers.
+
 **Example:**
 
 ```bash
 # List all local and remote stacks
 bm list
 
-# Bring up the 'actual' stack on the local machine (implicitly local)
+# Bring up the 'actual' stack on the local machine
 bm up actual
 # Or explicitly:
 bm up local:actual
@@ -140,8 +153,13 @@ bm status server1:cup
 # Check the status of ALL stacks on 'server1'
 bm status server1:
 
-# Stop the 'actual' stack
+# Stop the 'actual' stack (assuming it resolved to local or was specified)
+bm down actual 
+# Or explicitly:
 bm down local:actual
+
+# Pull latest images for the 'api' stack on 'server1'
+bm pull server1:api
 
 # Refresh the 'beaver' stack on 'server1'
 bm refresh server1:beaver
@@ -151,6 +169,15 @@ bm config ssh list
 
 # Add a new SSH host interactively
 bm config ssh add
+
+# Prune the local system only
+bm prune local
+
+# Prune the remote host 'server1' only
+bm prune server1
+
+# Prune local system AND all configured remote hosts
+bm prune
 ```
 
 ### Shell Completion
@@ -168,6 +195,8 @@ For example, to install completions for Fish shell:
 
 For other shells, replace `fish` with the appropriate shell name (e.g., `bash`, `zsh`) when running `bm completion` and consult your shell's documentation for the correct installation path.
 
+**Note:** Tab completion is optimized to prioritize local stacks. If you start typing a stack name that exists locally and haven't typed a colon (`:`), it will suggest local matches immediately without searching remotes, providing faster results. If you type a colon or no local match is found, it will proceed to discover and suggest remote stacks as well.
+
 ### TUI Mode
 
 Launch the interactive Text User Interface by running `bm` without any commands or arguments:
@@ -180,15 +209,16 @@ The TUI provides:
 - An interactive list of all discovered local and remote stacks.
 - Real-time status updates for stacks (Up, Down, Partial, Error, Loading).
 - Ability to select single or multiple stacks.
-- Actions (Up, Down, Refresh) applicable to the selected stack(s).
+- Actions (Up, Down, Refresh, Pull) applicable to the selected stack(s).
 - Detailed view showing individual container status for a stack.
 - SSH configuration management screen (add, edit, list, remove, import) accessible via the `c` key.
+- Prune action (`ctrl+p`) available on the SSH configuration screen to prune the selected host.
 
 Refer to the TUI's help bar at the bottom for specific controls within each view.
 
-## Stack Discovery
+### Stack Discovery
 
-- **Local:** `bm` looks for directories containing a `compose.yaml` file within `~/bucket` and `~/compose-bucket`, or a custom path set via `bm config set-local-root`. Each such directory represents a stack. The first root directory found containing stacks will be used.
+- **Local:** `bm` looks for directories containing a `compose.yaml` or `docker-compose.yml` file within `~/bucket` and `~/compose-bucket`, or a custom path set via `bm config set-local-root`. Each such directory represents a stack. The first root directory found containing stacks will be used.
 - **Remote:** `bm` connects to each configured (and enabled) SSH host and searches for stacks within the host's `remote_root` path (defaulting to `~/bucket` or `~/compose-bucket` on the remote machine if not specified).
 
 ## License

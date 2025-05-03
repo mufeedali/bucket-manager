@@ -27,7 +27,7 @@ func InitSSHManager(manager *ssh.Manager) {
 	sshManager = manager
 }
 
-type Project struct {
+type Stack struct {
 	Name               string
 	Path               string // Full local path OR path relative to AbsoluteRemoteRoot on SSH host
 	ServerName         string // "local" or the Name field from SSHHost config
@@ -37,11 +37,12 @@ type Project struct {
 }
 
 // Identifier returns the unique string representation (e.g., "my-app" or "server1:my-app").
-func (p Project) Identifier() string {
-	if !p.IsRemote {
-		return p.Name // Implicit local
+func (s Stack) Identifier() string {
+	if !s.IsRemote {
+		// Always return the explicit "local:" prefix for clarity and completion consistency
+		return fmt.Sprintf("local:%s", s.Name)
 	}
-	return fmt.Sprintf("%s:%s", p.ServerName, p.Name)
+	return fmt.Sprintf("%s:%s", s.ServerName, s.Name)
 }
 
 // GetComposeRootDirectory finds the root directory for local compose stacks,
@@ -93,8 +94,8 @@ func GetComposeRootDirectory() (string, error) {
 	return "", fmt.Errorf("could not find a valid local stack root directory (checked config 'local_root' and defaults: ~/bucket, ~/compose-bucket)")
 }
 
-func FindProjects() (<-chan Project, <-chan error, <-chan struct{}) {
-	projectChan := make(chan Project, 10)
+func FindStacks() (<-chan Stack, <-chan error, <-chan struct{}) {
+	stackChan := make(chan Stack, 10)
 	errorChan := make(chan error, 5)
 	doneChan := make(chan struct{})
 	var wg sync.WaitGroup
@@ -114,7 +115,7 @@ func FindProjects() (<-chan Project, <-chan error, <-chan struct{}) {
 
 	go func() {
 		wg.Wait()
-		close(projectChan)
+		close(stackChan)
 		close(errorChan)
 		close(doneChan)
 	}()
@@ -123,12 +124,12 @@ func FindProjects() (<-chan Project, <-chan error, <-chan struct{}) {
 		defer wg.Done()
 		localRootDir, err := GetComposeRootDirectory()
 		if err == nil {
-			localProjects, err := FindLocalProjects(localRootDir)
+			localStacks, err := FindLocalStacks(localRootDir)
 			if err != nil {
 				errorChan <- fmt.Errorf("local discovery failed: %w", err)
 			} else {
-				for _, p := range localProjects {
-					projectChan <- p
+				for _, s := range localStacks {
+					stackChan <- s
 				}
 			}
 		} else if !strings.Contains(err.Error(), "could not find") {
@@ -141,23 +142,23 @@ func FindProjects() (<-chan Project, <-chan error, <-chan struct{}) {
 			hostConfig := cfg.SSHHosts[i] // Create copy for the goroutine closure
 			go func(hc config.SSHHost) {
 				defer wg.Done()
-				remoteProjects, err := FindRemoteProjects(&hc)
+				remoteStacks, err := FindRemoteStacks(&hc)
 				if err != nil {
 					errorChan <- fmt.Errorf("remote discovery failed for %s: %w", hc.Name, err)
 				} else {
-					for _, p := range remoteProjects {
-						projectChan <- p
+					for _, s := range remoteStacks {
+						stackChan <- s
 					}
 				}
 			}(hostConfig)
 		}
 	}
 
-	return projectChan, errorChan, doneChan
+	return stackChan, errorChan, doneChan
 }
 
-func FindLocalProjects(rootDir string) ([]Project, error) {
-	var projects []Project
+func FindLocalStacks(rootDir string) ([]Stack, error) {
+	var stacks []Stack
 
 	entries, err := os.ReadDir(rootDir)
 	if err != nil {
@@ -169,30 +170,45 @@ func FindLocalProjects(rootDir string) ([]Project, error) {
 			continue
 		}
 
-		projectName := entry.Name()
-		projectPath := filepath.Join(rootDir, projectName)
+		stackName := entry.Name()
+		stackPath := filepath.Join(rootDir, stackName)
 
-		composePathYaml := filepath.Join(projectPath, "compose.yaml")
+		// Check for both compose.yaml and compose.yml
+		composePathYaml := filepath.Join(stackPath, "compose.yaml")
+		composePathYml := filepath.Join(stackPath, "compose.yml")
+
 		_, errYaml := os.Stat(composePathYaml)
+		_, errYml := os.Stat(composePathYml)
 
-		if errYaml == nil {
-			projects = append(projects, Project{
-				Name:       projectName,
-				Path:       projectPath,
+		// If either file exists, consider it a valid stack
+		if errYaml == nil || errYml == nil {
+			stacks = append(stacks, Stack{
+				Name:       stackName,
+				Path:       stackPath, // Store the absolute local path
 				ServerName: "local",
 				IsRemote:   false,
-				HostConfig: nil,
+				HostConfig: nil, // nil for local stacks
+				// AbsoluteRemoteRoot is empty for local stacks
 			})
-		} else if !os.IsNotExist(errYaml) {
-			fmt.Fprintf(os.Stderr, "Warning: could not stat compose files in local stack %s: %v\n", projectPath, errYaml)
+		} else if !os.IsNotExist(errYaml) || !os.IsNotExist(errYml) {
+			// Report error only if it's not ErrNotExist for *both* files
+			// If one exists, we don't care about errors on the other.
+			// If neither exists, report the error from the first check (yaml) if it wasn't NotExist.
+			if !os.IsNotExist(errYaml) {
+				fmt.Fprintf(os.Stderr, "Warning: could not stat compose files in local stack %s: %v\n", stackPath, errYaml)
+			} else if !os.IsNotExist(errYml) {
+				// If yaml was NotExist, but yml had a different error, report that.
+				fmt.Fprintf(os.Stderr, "Warning: could not stat compose files in local stack %s: %v\n", stackPath, errYml)
+			}
+			// If both were os.IsNotExist, we simply skip the directory.
 		}
 	}
 
-	return projects, nil
+	return stacks, nil
 }
 
-func FindRemoteProjects(hostConfig *config.SSHHost) ([]Project, error) {
-	var projects []Project
+func FindRemoteStacks(hostConfig *config.SSHHost) ([]Stack, error) {
+	var stacks []Stack
 
 	if sshManager == nil {
 		return nil, fmt.Errorf("ssh manager not initialized for discovery on %s", hostConfig.Name)
@@ -281,13 +297,13 @@ func FindRemoteProjects(hostConfig *config.SSHHost) ([]Project, error) {
 		}
 		relativePath = filepath.ToSlash(relativePath) // Ensure forward slashes
 
-		projectName := filepath.Base(relativePath)
-		if projectName == "." || projectName == "/" {
+		stackName := filepath.Base(relativePath)
+		if stackName == "." || stackName == "/" {
 			continue
 		}
 
-		projects = append(projects, Project{
-			Name:               projectName,
+		stacks = append(stacks, Stack{
+			Name:               stackName,
 			Path:               relativePath,
 			ServerName:         hostConfig.Name,
 			IsRemote:           true,
@@ -296,8 +312,8 @@ func FindRemoteProjects(hostConfig *config.SSHHost) ([]Project, error) {
 		})
 	}
 	if err := scanner.Err(); err != nil {
-		return projects, fmt.Errorf("error reading ssh output for host %s: %w", hostConfig.Name, err)
+		return stacks, fmt.Errorf("error reading ssh output for host %s: %w", hostConfig.Name, err)
 	}
 
-	return projects, nil
+	return stacks, nil
 }

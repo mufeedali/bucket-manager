@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/kevinburke/ssh_config"
 )
@@ -52,36 +51,48 @@ func ParseSSHConfig() ([]PotentialHost, error) {
 	var potentialHosts []PotentialHost
 
 	for _, host := range cfg.Hosts {
+		// Skip global ("*") or empty patterns
 		if len(host.Patterns) == 0 || host.Patterns[0].String() == "*" {
 			continue
 		}
 
+		// Use the first pattern as the alias for import suggestion
 		alias := host.Patterns[0].String()
 
+		// Get relevant config values for this host alias
+		// Ignore errors from cfg.Get, as missing values are handled below
 		hostname, _ := cfg.Get(alias, "HostName")
 		user, _ := cfg.Get(alias, "User")
 		portStr, _ := cfg.Get(alias, "Port")
 		keyPath, _ := cfg.Get(alias, "IdentityFile")
 
+		// If HostName is not specified, use the alias itself
 		if hostname == "" {
 			hostname = alias
 		}
 
+		// Default port is 22
 		port := 22
 		if portStr != "" {
 			p, err := strconv.Atoi(portStr)
-			if err == nil {
+			if err == nil { // Only use parsed port if conversion is successful
 				port = p
 			}
+			// Ignore conversion errors, keep default port 22
 		}
 
-		if strings.HasPrefix(keyPath, "~/") {
-			homeDir, homeErr := os.UserHomeDir()
-			if homeErr == nil {
-				keyPath = filepath.Join(homeDir, keyPath[2:])
+		// Resolve ~ in IdentityFile path using the shared function
+		if keyPath != "" {
+			resolvedKeyPath, resolveErr := ResolvePath(keyPath)
+			if resolveErr == nil {
+				keyPath = resolvedKeyPath
+			} else {
+				// Log warning but keep original path if resolution fails
+				fmt.Fprintf(os.Stderr, "Warning: could not resolve key path '%s' for host '%s': %v\n", keyPath, alias, resolveErr)
 			}
 		}
 
+		// Only consider hosts with both a hostname and user specified
 		if hostname != "" && user != "" {
 			potentialHosts = append(potentialHosts, PotentialHost{
 				Alias:    alias,
