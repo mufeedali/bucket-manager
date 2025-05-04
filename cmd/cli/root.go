@@ -909,35 +909,45 @@ func runSequence(stack discovery.Stack, sequence []runner.CommandStep) error {
 	for _, step := range sequence {
 		stepColor.Printf("\n--- Running Step: %s for %s (%s) ---\n", step.Name, stack.Name, identifierColor.Sprint(stack.ServerName))
 
-		outChan, errChan := runner.StreamCommand(step)
+		// CLI always uses cliMode: true for direct output
+		outChan, errChan := runner.StreamCommand(step, true)
 
 		var stepErr error
-		var wg sync.WaitGroup // Use WaitGroup instead of channel for output synchronization
-		wg.Add(1)
+		var wg sync.WaitGroup
 
-		// Goroutine to process command output
-		go func() {
-			defer wg.Done()
-			for line := range outChan {
-				if line.IsError {
-					// Print errors directly to stderr
-					errorColor.Fprintln(os.Stderr, line.Line)
-				} else {
-					// Print standard output to stdout
-					fmt.Println(line.Line)
+		if !step.Stack.IsRemote {
+			// --- Local Execution ---
+			// Output is connected directly in runner.go.
+			// We only need to wait for the command to finish via errChan.
+			stepErr = <-errChan
+			// Print a newline after direct output finishes.
+			fmt.Println()
+		} else {
+			// --- Remote Execution ---
+			// Process output via the outChan as before.
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for outputLine := range outChan {
+					// Print raw output directly to stdout. Let the terminal handle \r and colors.
+					fmt.Fprint(os.Stdout, outputLine.Line)
 				}
-			}
-		}()
+			}()
 
-		// Wait for the error channel to return the final error status
-		stepErr = <-errChan
+			// Wait for the error channel to return the final error status
+			stepErr = <-errChan
 
-		// Wait for the output processing goroutine to finish
-		wg.Wait()
+			// Wait for the output processing goroutine to finish
+			wg.Wait()
 
+			// Print a newline AFTER all remote output is done.
+			fmt.Println()
+		}
+
+		// --- Handle Step Completion ---
 		if stepErr != nil {
-			// Error is already printed to stderr by the runner/goroutine
-			return fmt.Errorf("step '%s' failed: %w", step.Name, stepErr) // Wrap error for context
+			// Error details might have been printed by the command itself.
+			return fmt.Errorf("step '%s' failed", step.Name) // Simplified error message
 		}
 		successColor.Printf("--- Step '%s' completed successfully for %s (%s) ---\n", step.Name, stack.Name, identifierColor.Sprint(stack.ServerName))
 	}
@@ -964,27 +974,43 @@ func runHostAction(actionName string, targets []runner.HostTarget) error {
 			}
 
 			stepColor.Printf("\n--- Running Step: %s for host %s ---\n", step.Name, identifierColor.Sprint(t.ServerName))
-			outChan, stepErrChan := runner.RunHostCommand(step)
+			// CLI always uses cliMode: true for direct output
+			outChan, stepErrChan := runner.RunHostCommand(step, true)
 
+			var stepErr error
 			var outputWg sync.WaitGroup
-			outputWg.Add(1)
-			go func() {
-				defer outputWg.Done()
-				for line := range outChan {
-					if line.IsError {
-						errorColor.Fprintln(os.Stderr, line.Line)
-					} else {
-						fmt.Println(line.Line)
+
+			if !t.IsRemote {
+				// --- Local Execution ---
+				// Output is connected directly in runner.go.
+				// We only need to wait for the command to finish via stepErrChan.
+				stepErr = <-stepErrChan
+				// Print a newline after direct output finishes.
+				fmt.Println()
+			} else {
+				// --- Remote Execution ---
+				// Process output via the outChan as before.
+				outputWg.Add(1)
+				go func() {
+					defer outputWg.Done()
+					for outputLine := range outChan {
+						// Print raw output directly to stdout. Let the terminal handle \r and colors.
+						fmt.Fprint(os.Stdout, outputLine.Line)
 					}
-				}
-			}()
+				}()
 
-			stepErr := <-stepErrChan
-			outputWg.Wait() // Ensure all output is processed before checking error
+				stepErr = <-stepErrChan
+				outputWg.Wait() // Ensure all remote output is processed before checking error
 
+				// Print a newline AFTER all remote output is done.
+				fmt.Println()
+			}
+
+			// --- Handle Step Completion ---
 			if stepErr != nil {
-				err := fmt.Errorf("step '%s' failed for host %s: %w", step.Name, t.ServerName, stepErr)
-				errorColor.Fprintf(os.Stderr, "%v\n", err) // Print error immediately
+				err := fmt.Errorf("step '%s' failed for host %s", step.Name, t.ServerName) // Simplified error
+				// Avoid printing error details again if they were part of command output
+				errorColor.Fprintf(os.Stderr, "%v\n", err) // Print simplified error summary
 				errChan <- err                             // Send error to the channel
 				return
 			}

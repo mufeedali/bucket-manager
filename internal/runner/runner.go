@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"sync"
 
 	"os/exec"
 	"path/filepath"
@@ -61,9 +63,12 @@ type HostCommandStep struct {
 }
 
 // RunHostCommand executes a command directly on a target host (local or remote).
-// It streams output and returns an error channel, similar to StreamCommand.
-func RunHostCommand(step HostCommandStep) (<-chan OutputLine, <-chan error) {
-	outChan := make(chan OutputLine)
+// It streams output based on the cliMode.
+// If cliMode is true, output goes directly to os.Stdout/Stderr.
+// If cliMode is false, output is sent line by line over outChan.
+func RunHostCommand(step HostCommandStep, cliMode bool) (<-chan OutputLine, <-chan error) {
+	// Buffer channel slightly for TUI mode to prevent blocking on rapid output
+	outChan := make(chan OutputLine, 10)
 	errChan := make(chan error, 1)
 
 	go func() {
@@ -106,6 +111,23 @@ func RunHostCommand(step HostCommandStep) (<-chan OutputLine, <-chan error) {
 				return
 			}
 
+			// Request a PTY for interactive commands like podman compose (enables color)
+			// Use sensible defaults for terminal type and size.
+			modes := gossh.TerminalModes{
+				gossh.ECHO:          0,     // Disable echoing input
+				gossh.TTY_OP_ISPEED: 14400, // Input speed = 14.4kbaud
+				gossh.TTY_OP_OSPEED: 14400, // Output speed = 14.4kbaud
+			}
+			// Use a common terminal type like xterm-256color
+			if err := session.RequestPty("xterm-256color", 80, 40, modes); err != nil {
+				// Log non-critical error, but continue execution
+				// Some servers might not support PTY allocation but commands might still work
+				// fmt.Fprintf(os.Stderr, "Warning: Failed to request pty for %s (continuing): %v\n", cmdDesc, err)
+				// If PTY is strictly required, return error:
+				// errChan <- fmt.Errorf("failed to request pty for %s: %w", cmdDesc, err)
+				// return
+			}
+
 			// Construct the remote command string (command args...) - No cd needed for host commands
 			remoteCmdParts := []string{step.Command}
 			for _, arg := range step.Args {
@@ -118,15 +140,40 @@ func RunHostCommand(step HostCommandStep) (<-chan OutputLine, <-chan error) {
 				return
 			}
 
-			outputDone := make(chan struct{}, 2) // Wait for both stdout and stderr streams
-			go streamPipe(stdoutPipe, outChan, outputDone, false)
-			go streamPipe(stderrPipe, outChan, outputDone, true)
+			var cmdErr error
+			if cliMode {
+				// --- CLI Mode: Direct Output ---
+				// Use io.Copy to directly pipe remote output to local stdout/stderr
+				// This handles TTY output correctly (colors, \r)
+				var wg sync.WaitGroup
+				wg.Add(2) // Wait for both stdout and stderr copying
 
-			cmdErr := session.Wait() // Wait for the remote command to finish
+				go func() {
+					defer wg.Done()
+					_, _ = io.Copy(os.Stdout, stdoutPipe) // Ignore errors for now
+				}()
+				go func() {
+					defer wg.Done()
+					// Send remote stderr to local stderr for CLI mode
+					_, _ = io.Copy(os.Stderr, stderrPipe)
+				}()
 
-			// Wait for both pipe streaming goroutines to finish processing
-			<-outputDone
-			<-outputDone
+				cmdErr = session.Wait() // Wait for the remote command to finish
+				wg.Wait()               // Wait for io.Copy goroutines to finish
+				// Output was handled directly by io.Copy
+			} else {
+				// --- TUI Mode: Channel Output ---
+				outputDone := make(chan struct{}, 2) // Wait for both streamPipe goroutines
+
+				go streamPipe(stdoutPipe, outChan, outputDone, false)
+				go streamPipe(stderrPipe, outChan, outputDone, true)
+
+				cmdErr = session.Wait() // Wait for the remote command to finish
+
+				// Wait for pipe readers to finish *after* command Wait returns
+				<-outputDone
+				<-outputDone
+			}
 
 			if cmdErr != nil {
 				exitCode := -1
@@ -146,33 +193,50 @@ func RunHostCommand(step HostCommandStep) (<-chan OutputLine, <-chan error) {
 		} else {
 			// --- Local Execution ---
 			cmd := exec.Command(step.Command, step.Args...)
-			// cmd.Dir is not set, run in the default working directory
+			// cmd.Dir is not set for host commands, run in the default working directory
 			localCmdDesc := fmt.Sprintf("local %s", cmdDesc)
 
-			stdoutPipe, err := cmd.StdoutPipe()
-			if err != nil {
-				errChan <- fmt.Errorf("failed to get stdout pipe for %s: %w", localCmdDesc, err)
-				return
+			var cmdErr error
+			if cliMode {
+				// --- CLI Mode: Direct Output ---
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+
+				if err := cmd.Start(); err != nil {
+					errChan <- fmt.Errorf("failed to start %s: %w", localCmdDesc, err)
+					return
+				}
+				// No need for streamPipe goroutines or outputDone channel for direct output
+				cmdErr = cmd.Wait() // Wait for the command to finish
+				// Output was handled directly by the process writing to os.Stdout/Stderr
+			} else {
+				// --- TUI Mode: Channel Output ---
+				stdoutPipe, err := cmd.StdoutPipe()
+				if err != nil {
+					errChan <- fmt.Errorf("failed to get stdout pipe for %s: %w", localCmdDesc, err)
+					return
+				}
+				stderrPipe, err := cmd.StderrPipe()
+				if err != nil {
+					errChan <- fmt.Errorf("failed to get stderr pipe for %s: %w", localCmdDesc, err)
+					return
+				}
+
+				if err := cmd.Start(); err != nil {
+					errChan <- fmt.Errorf("failed to start %s: %w", localCmdDesc, err)
+					return
+				}
+
+				outputDone := make(chan struct{}, 2) // Wait for both streamPipe goroutines
+				go streamPipe(stdoutPipe, outChan, outputDone, false)
+				go streamPipe(stderrPipe, outChan, outputDone, true)
+
+				cmdErr = cmd.Wait() // Wait for the command to finish
+
+				// Wait for pipe readers to finish *after* command Wait returns
+				<-outputDone
+				<-outputDone
 			}
-			stderrPipe, err := cmd.StderrPipe()
-			if err != nil {
-				errChan <- fmt.Errorf("failed to get stderr pipe for %s: %w", localCmdDesc, err)
-				return
-			}
-
-			if err := cmd.Start(); err != nil {
-				errChan <- fmt.Errorf("failed to start %s: %w", localCmdDesc, err)
-				return
-			}
-
-			outputDone := make(chan struct{}, 2)
-			go streamPipe(stdoutPipe, outChan, outputDone, false)
-			go streamPipe(stderrPipe, outChan, outputDone, true)
-
-			cmdErr := cmd.Wait()
-
-			<-outputDone
-			<-outputDone
 
 			if cmdErr != nil {
 				exitCode := -1
@@ -194,23 +258,34 @@ func RunHostCommand(step HostCommandStep) (<-chan OutputLine, <-chan error) {
 	return outChan, errChan
 }
 
+// streamPipe reads raw chunks from the pipe and sends them over the outChan.
+// This is used for TUI mode where raw output (including control characters) is needed.
 func streamPipe(pipe io.Reader, outChan chan<- OutputLine, doneChan chan<- struct{}, isError bool) {
 	defer func() { doneChan <- struct{}{} }()
-	scanner := bufio.NewScanner(pipe)
-	for scanner.Scan() {
-		outChan <- OutputLine{Line: scanner.Text(), IsError: isError}
-	}
-	if err := scanner.Err(); err != nil {
-		// Use io.Discard to avoid printing errors directly if not needed,
-		// but log them internally or handle them appropriately if debugging is required.
-		// fmt.Fprintf(os.Stderr, "%s pipe scanner error for %s: %v\n", map[bool]string{false: "stdout", true: "stderr"}[isError], cmdDesc, err)
-		_ = err // Avoid unused variable error if not logging
+	buf := make([]byte, 1024) // Read in chunks
+	for {
+		n, err := pipe.Read(buf)
+		if n > 0 {
+			// Send the raw chunk as a string
+			outChan <- OutputLine{Line: string(buf[:n]), IsError: isError}
+		}
+		if err != nil {
+			if err != io.EOF {
+				// Log or handle read errors if necessary
+				// fmt.Fprintf(os.Stderr, "Pipe read error (%v): %v\n", isError, err)
+			}
+			break // Exit loop on EOF or other errors
+		}
 	}
 }
 
 // StreamCommand executes a sequence of commands within a specific stack's context.
-func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
-	outChan := make(chan OutputLine)
+// It streams output based on the cliMode.
+// If cliMode is true, output goes directly to os.Stdout/Stderr.
+// If cliMode is false, output is sent line by line over outChan.
+func StreamCommand(step CommandStep, cliMode bool) (<-chan OutputLine, <-chan error) {
+	// Buffer channel slightly for TUI mode to prevent blocking on rapid output
+	outChan := make(chan OutputLine, 10)
 	errChan := make(chan error, 1)
 
 	go func() {
@@ -253,6 +328,21 @@ func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 				return
 			}
 
+			// Request a PTY for interactive commands like podman compose (enables color)
+			modes := gossh.TerminalModes{
+				gossh.ECHO:          0,     // disable echoing input
+				gossh.TTY_OP_ISPEED: 14400, // input speed = 14.4kbaud
+				gossh.TTY_OP_OSPEED: 14400, // output speed = 14.4kbaud
+			}
+			// Use a common terminal type like xterm-256color
+			if err := session.RequestPty("xterm-256color", 80, 40, modes); err != nil {
+				// Log non-critical error, but continue execution
+				// fmt.Fprintf(os.Stderr, "Warning: Failed to request pty for %s (continuing): %v\n", cmdDesc, err)
+				// If PTY is strictly required, return error:
+				// errChan <- fmt.Errorf("failed to request pty for %s: %w", cmdDesc, err)
+				// return
+			}
+
 			// Construct the remote command string (cd /resolved/absolute/root/relative/path && command args...)
 			if step.Stack.AbsoluteRemoteRoot == "" {
 				errChan <- fmt.Errorf("internal error: AbsoluteRemoteRoot is empty for remote stack %s", step.Stack.Identifier())
@@ -270,15 +360,39 @@ func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 				return
 			}
 
-			outputDone := make(chan struct{}, 2) // Wait for both stdout and stderr streams
-			go streamPipe(stdoutPipe, outChan, outputDone, false)
-			go streamPipe(stderrPipe, outChan, outputDone, true)
+			var cmdErr error
+			if cliMode {
+				// --- CLI Mode: Direct Output ---
+				// Use io.Copy to directly pipe remote output to local stdout/stderr
+				var wg sync.WaitGroup
+				wg.Add(2) // Wait for both stdout and stderr copying
 
-			cmdErr := session.Wait() // Wait for the remote command to finish
+				go func() {
+					defer wg.Done()
+					_, _ = io.Copy(os.Stdout, stdoutPipe) // Ignore errors for now
+				}()
+				go func() {
+					defer wg.Done()
+					// Send remote stderr to local stderr for CLI mode
+					_, _ = io.Copy(os.Stderr, stderrPipe)
+				}()
 
-			// Wait for both pipe streaming goroutines to finish processing
-			<-outputDone
-			<-outputDone
+				cmdErr = session.Wait() // Wait for the remote command to finish
+				wg.Wait()               // Wait for io.Copy goroutines to finish
+				// Output was handled directly by io.Copy
+			} else {
+				// --- TUI Mode: Channel Output ---
+				outputDone := make(chan struct{}, 2) // Wait for both streamPipe goroutines
+
+				go streamPipe(stdoutPipe, outChan, outputDone, false)
+				go streamPipe(stderrPipe, outChan, outputDone, true)
+
+				cmdErr = session.Wait() // Wait for the remote command to finish
+
+				// Wait for pipe readers to finish *after* command Wait returns
+				<-outputDone
+				<-outputDone
+			}
 
 			if cmdErr != nil {
 				exitCode := -1
@@ -301,30 +415,47 @@ func StreamCommand(step CommandStep) (<-chan OutputLine, <-chan error) {
 			cmd.Dir = step.Stack.Path // Run in the stack's directory
 			localCmdDesc := fmt.Sprintf("local %s", cmdDesc)
 
-			stdoutPipe, err := cmd.StdoutPipe()
-			if err != nil {
-				errChan <- fmt.Errorf("failed to get stdout pipe for %s: %w", localCmdDesc, err)
-				return
+			var cmdErr error
+			if cliMode {
+				// --- CLI Mode: Direct Output ---
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+
+				if err := cmd.Start(); err != nil {
+					errChan <- fmt.Errorf("failed to start %s: %w", localCmdDesc, err)
+					return
+				}
+				// No need for streamPipe goroutines or outputDone channel for direct output
+				cmdErr = cmd.Wait() // Wait for the command to finish
+				// Output was handled directly by the process writing to os.Stdout/Stderr
+			} else {
+				// --- TUI Mode: Channel Output ---
+				stdoutPipe, err := cmd.StdoutPipe()
+				if err != nil {
+					errChan <- fmt.Errorf("failed to get stdout pipe for %s: %w", localCmdDesc, err)
+					return
+				}
+				stderrPipe, err := cmd.StderrPipe()
+				if err != nil {
+					errChan <- fmt.Errorf("failed to get stderr pipe for %s: %w", localCmdDesc, err)
+					return
+				}
+
+				if err := cmd.Start(); err != nil {
+					errChan <- fmt.Errorf("failed to start %s: %w", localCmdDesc, err)
+					return
+				}
+
+				outputDone := make(chan struct{}, 2) // Wait for both streamPipe goroutines
+				go streamPipe(stdoutPipe, outChan, outputDone, false)
+				go streamPipe(stderrPipe, outChan, outputDone, true)
+
+				cmdErr = cmd.Wait() // Wait for the command to finish
+
+				// Wait for pipe readers to finish *after* command Wait returns
+				<-outputDone
+				<-outputDone
 			}
-			stderrPipe, err := cmd.StderrPipe()
-			if err != nil {
-				errChan <- fmt.Errorf("failed to get stderr pipe for %s: %w", localCmdDesc, err)
-				return
-			}
-
-			if err := cmd.Start(); err != nil {
-				errChan <- fmt.Errorf("failed to start %s: %w", localCmdDesc, err)
-				return
-			}
-
-			outputDone := make(chan struct{}, 2)
-			go streamPipe(stdoutPipe, outChan, outputDone, false)
-			go streamPipe(stderrPipe, outChan, outputDone, true)
-
-			cmdErr := cmd.Wait()
-
-			<-outputDone
-			<-outputDone
 
 			if cmdErr != nil {
 				exitCode := -1
@@ -351,13 +482,13 @@ func UpSequence(stack discovery.Stack) []CommandStep {
 		{
 			Name:    "Pull Images",
 			Command: "podman",
-			Args:    []string{"compose", "pull"}, // Remove -f compose.yaml
+			Args:    []string{"compose", "pull"},
 			Stack:   stack,
 		},
 		{
 			Name:    "Start Containers",
 			Command: "podman",
-			Args:    []string{"compose", "up", "-d"}, // Remove -f compose.yaml
+			Args:    []string{"compose", "up", "-d"},
 			Stack:   stack,
 		},
 	}
@@ -367,7 +498,7 @@ func PullSequence(stack discovery.Stack) []CommandStep {
 		{
 			Name:    "Pull Images",
 			Command: "podman",
-			Args:    []string{"compose", "pull"}, // Remove -f compose.yaml
+			Args:    []string{"compose", "pull"},
 			Stack:   stack,
 		},
 	}
@@ -378,7 +509,7 @@ func DownSequence(stack discovery.Stack) []CommandStep {
 		{
 			Name:    "Stop Containers",
 			Command: "podman",
-			Args:    []string{"compose", "down"}, // Remove -f compose.yaml
+			Args:    []string{"compose", "down"},
 			Stack:   stack,
 		},
 	}
@@ -389,19 +520,19 @@ func RefreshSequence(stack discovery.Stack) []CommandStep {
 		{
 			Name:    "Pull Images",
 			Command: "podman",
-			Args:    []string{"compose", "pull"}, // Remove -f compose.yaml
+			Args:    []string{"compose", "pull"},
 			Stack:   stack,
 		},
 		{
 			Name:    "Stop Containers",
 			Command: "podman",
-			Args:    []string{"compose", "down"}, // Remove -f compose.yaml
+			Args:    []string{"compose", "down"},
 			Stack:   stack,
 		},
 		{
 			Name:    "Start Containers",
 			Command: "podman",
-			Args:    []string{"compose", "up", "-d"}, // Remove -f compose.yaml
+			Args:    []string{"compose", "up", "-d"},
 			Stack:   stack,
 		},
 	}
@@ -456,7 +587,6 @@ type StackRuntimeInfo struct {
 func GetStackStatus(stack discovery.Stack) StackRuntimeInfo {
 	info := StackRuntimeInfo{Stack: stack, OverallStatus: StatusUnknown}
 	cmdDesc := fmt.Sprintf("status check for stack %s", stack.Identifier())
-	// Remove -f compose.yaml, let podman-compose find compose.yaml or compose.yml
 	psArgs := []string{"compose", "ps", "--format", "json", "-a"}
 
 	var output []byte

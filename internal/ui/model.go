@@ -213,8 +213,8 @@ var DefaultKeyMap = KeyMap{
 		key.WithHelp("space", "toggle disabled"),
 	),
 	PruneAction: key.NewBinding(
-		key.WithKeys("P"),               // Using Shift+P for prune
-		key.WithHelp("P", "prune host"), // Changed help text slightly as TUI only prunes selected
+		key.WithKeys("P"),
+		key.WithHelp("P", "prune host"),
 	),
 }
 
@@ -501,17 +501,19 @@ func saveImportedSshHostsCmd(hostsToSave []config.SSHHost) tea.Cmd {
 	}
 }
 
-// runHostActionCmd triggers the execution of a host-level command step.
+// runHostActionCmd triggers the execution of a host-level command step in TUI mode.
 func runHostActionCmd(step runner.HostCommandStep) tea.Cmd {
 	return func() tea.Msg {
-		outChan, errChan := runner.RunHostCommand(step)
+		// TUI always uses cliMode: false for channel-based output
+		outChan, errChan := runner.RunHostCommand(step, false)
 		return channelsAvailableMsg{outChan: outChan, errChan: errChan}
 	}
 }
 
 func runStepCmd(step runner.CommandStep) tea.Cmd {
 	return func() tea.Msg {
-		outChan, errChan := runner.StreamCommand(step)
+		// TUI always uses cliMode: false for channel-based output
+		outChan, errChan := runner.StreamCommand(step, false)
 		return channelsAvailableMsg{outChan: outChan, errChan: errChan}
 	}
 }
@@ -1373,22 +1375,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case outputLineMsg:
-		if m.currentState == stateRunningSequence && m.outputChan != nil {
-			if msg.line.IsError {
-				m.outputContent += errorStyle.Render(msg.line.Line) + "\n"
-			} else {
-				m.outputContent += msg.line.Line + "\n"
-			}
-			m.viewport.SetContent(m.outputContent)
-			m.viewport.GotoBottom()
-			cmds = append(cmds, waitForOutputCmd(m.outputChan))
-		} else if m.currentState == stateRunningHostAction && m.outputChan != nil {
-			// Append output for host action
-			if msg.line.IsError {
-				m.outputContent += errorStyle.Render(msg.line.Line) + "\n"
-			} else {
-				m.outputContent += msg.line.Line + "\n"
-			}
+		if (m.currentState == stateRunningSequence || m.currentState == stateRunningHostAction) && m.outputChan != nil {
+			// Append the raw line content (which might be a chunk) directly.
+			// This preserves original ANSI colors and control characters like \r.
+			// The terminal and lipgloss viewport should handle rendering correctly.
+			m.outputContent += msg.line.Line // Append the raw chunk/line
 			m.viewport.SetContent(m.outputContent)
 			m.viewport.GotoBottom()
 			cmds = append(cmds, waitForOutputCmd(m.outputChan)) // Continue waiting for output
