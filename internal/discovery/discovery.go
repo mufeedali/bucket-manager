@@ -289,9 +289,9 @@ func FindRemoteStacks(hostConfig *config.SSHHost) ([]Stack, error) {
 	}
 	// No explicit session.Close() needed here for findSession; CombinedOutput handles the lifecycle.
 
-	// Command to find directories containing compose.y*ml one level deep using fd (representing stack roots)
+	// Command to find directories containing compose.y*ml one level deep using find (representing stack roots)
 	remoteFindCmd := fmt.Sprintf(
-		`fd -g -d 2 'compose.y*ml' %s -x dirname {} | sort -u`,
+		`find %s -maxdepth 2 -name 'compose.y*ml' -printf '%%h\\n' | sort -u`,
 		util.QuoteArgForShell(absoluteRemoteRoot),
 	)
 
