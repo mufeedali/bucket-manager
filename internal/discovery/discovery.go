@@ -9,13 +9,18 @@ import (
 	"bucket-manager/internal/util"
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"golang.org/x/sync/semaphore"
 )
+
+const maxConcurrentDiscoveries = 8 // Limit concurrent SSH discoveries
 
 var sshManager *ssh.Manager
 
@@ -137,11 +142,22 @@ func FindStacks() (<-chan Stack, <-chan error, <-chan struct{}) {
 		}
 	}()
 
-	if configErr == nil {
+	if configErr == nil && len(cfg.SSHHosts) > 0 {
+		sem := semaphore.NewWeighted(maxConcurrentDiscoveries)
+		ctx := context.Background()
+
 		for i := range cfg.SSHHosts {
 			hostConfig := cfg.SSHHosts[i] // Create copy for the goroutine closure
 			go func(hc config.SSHHost) {
 				defer wg.Done()
+
+				// Acquire semaphore slot
+				if err := sem.Acquire(ctx, 1); err != nil {
+					errorChan <- fmt.Errorf("failed to acquire semaphore for %s: %w", hc.Name, err)
+					return
+				}
+				defer sem.Release(1) // Release semaphore slot when done
+
 				remoteStacks, err := FindRemoteStacks(&hc)
 				if err != nil {
 					errorChan <- fmt.Errorf("remote discovery failed for %s: %w", hc.Name, err)

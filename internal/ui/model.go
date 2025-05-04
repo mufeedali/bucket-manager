@@ -7,6 +7,7 @@ import (
 	"bucket-manager/internal/config"
 	"bucket-manager/internal/discovery"
 	"bucket-manager/internal/runner"
+	"context"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -18,12 +19,14 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"golang.org/x/sync/semaphore"
 )
 
 const (
 	headerHeight = 2
 )
 
+const maxConcurrentStatusChecks = 4 // Limit concurrent status checks
 var BubbleProgram *tea.Program
 
 var (
@@ -56,8 +59,8 @@ const (
 	stateSshConfigImportSelect
 	stateSshConfigImportDetails
 	stateSshConfigEditForm
-	statePruneConfirm      // New state for prune confirmation
-	stateRunningHostAction // New state for running host-level actions like prune
+	statePruneConfirm
+	stateRunningHostAction
 )
 
 const (
@@ -97,7 +100,7 @@ type KeyMap struct {
 	Edit   key.Binding
 
 	ToggleDisabled key.Binding
-	PruneAction    key.Binding // New keybinding for prune
+	PruneAction    key.Binding
 }
 
 var DefaultKeyMap = KeyMap{
@@ -268,8 +271,9 @@ type model struct {
 	importCursor       int
 	importError        error
 	importInfoMsg      string
-	hostsToConfigure   []config.SSHHost // Hosts built from import details form
-	configuringHostIdx int              // Index in importableHosts currently being configured
+	hostsToConfigure   []config.SSHHost    // Hosts built from import details form
+	configuringHostIdx int                 // Index in importableHosts currently being configured
+	statusCheckSem     *semaphore.Weighted // Semaphore for limiting status checks
 }
 
 // --- Messages ---
@@ -334,8 +338,25 @@ func findStacksCmd() tea.Cmd {
 	}
 }
 
-func fetchStackStatusCmd(stack discovery.Stack) tea.Cmd {
+// fetchStackStatusCmd fetches the status for a single stack, respecting concurrency limits.
+func (m *model) fetchStackStatusCmd(stack discovery.Stack) tea.Cmd {
 	return func() tea.Msg {
+		// Acquire semaphore
+		ctx := context.Background()
+		if err := m.statusCheckSem.Acquire(ctx, 1); err != nil {
+			// If acquiring fails, return an error status immediately
+			return stackStatusLoadedMsg{
+				stackIdentifier: stack.Identifier(),
+				statusInfo: runner.StackRuntimeInfo{
+					Stack:         stack,
+					OverallStatus: runner.StatusError,
+					Error:         fmt.Errorf("failed to acquire status check semaphore: %w", err),
+				},
+			}
+		}
+		defer m.statusCheckSem.Release(1) // Release semaphore when done
+
+		// Semaphore acquired, proceed with status check
 		statusInfo := runner.GetStackStatus(stack)
 		return stackStatusLoadedMsg{
 			stackIdentifier: stack.Identifier(),
@@ -556,6 +577,7 @@ func InitialModel() model {
 		detailsViewport:      vp,
 		formViewport:         vp,
 		importSelectViewport: vp,
+		statusCheckSem:       semaphore.NewWeighted(maxConcurrentStatusChecks),
 	}
 	return m
 }
@@ -773,7 +795,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						stackID := stack.Identifier()
 						if !m.loadingStatus[stackID] {
 							m.loadingStatus[stackID] = true
-							cmds = append(cmds, fetchStackStatusCmd(*stack))
+							cmds = append(cmds, m.fetchStackStatusCmd(*stack))
 						}
 					}
 				}
@@ -1230,7 +1252,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		stackID := msg.stack.Identifier()
 		if !m.loadingStatus[stackID] {
 			m.loadingStatus[stackID] = true
-			cmds = append(cmds, fetchStackStatusCmd(msg.stack))
+			cmds = append(cmds, m.fetchStackStatusCmd(msg.stack))
 		}
 
 	case discoveryErrorMsg:
@@ -1328,7 +1350,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							stackID := stack.Identifier()
 							if !m.loadingStatus[stackID] {
 								m.loadingStatus[stackID] = true
-								cmds = append(cmds, fetchStackStatusCmd(*stack))
+								cmds = append(cmds, m.fetchStackStatusCmd(*stack))
 							}
 						}
 					}
@@ -1371,7 +1393,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errorChan = msg.errChan
 			// Use the same waitForOutputCmd, but need a way to distinguish error source if needed
 			// For now, stepFinishedMsg handles the final error.
-			cmds = append(cmds, waitForOutputCmd(m.outputChan), waitForErrorCmd(m.errorChan)) // Reusing waitForErrorCmd
+			cmds = append(cmds, waitForOutputCmd(m.outputChan), waitForErrorCmd(m.errorChan))
 		}
 
 	case outputLineMsg:
@@ -1996,7 +2018,7 @@ func (m *model) handleStackListKeys(msg tea.KeyMsg) []tea.Cmd {
 						stackID := stack.Identifier()
 						if _, loaded := m.stackStatuses[stackID]; !loaded && !m.loadingStatus[stackID] {
 							m.loadingStatus[stackID] = true
-							cmds = append(cmds, fetchStackStatusCmd(stack))
+							cmds = append(cmds, m.fetchStackStatusCmd(stack))
 						}
 					}
 				}
@@ -2010,7 +2032,7 @@ func (m *model) handleStackListKeys(msg tea.KeyMsg) []tea.Cmd {
 				stackID := m.detailedStack.Identifier()
 				if !m.loadingStatus[stackID] {
 					m.loadingStatus[stackID] = true
-					cmds = append(cmds, fetchStackStatusCmd(*m.detailedStack))
+					cmds = append(cmds, m.fetchStackStatusCmd(*m.detailedStack))
 				}
 			}
 		}
@@ -2021,7 +2043,7 @@ func (m *model) handleStackListKeys(msg tea.KeyMsg) []tea.Cmd {
 		stackID := selectedStack.Identifier()
 		if _, loaded := m.stackStatuses[stackID]; !loaded && !m.loadingStatus[stackID] {
 			m.loadingStatus[stackID] = true
-			cmds = append(cmds, fetchStackStatusCmd(selectedStack))
+			cmds = append(cmds, m.fetchStackStatusCmd(selectedStack))
 		}
 	}
 
