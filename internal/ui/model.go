@@ -858,9 +858,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					focusedInputIndex = 4 // Actual index in m.formInputs for Remote Root
 				case keyOrPasswordFocusIndex:
 					if authNeeded {
-						if m.formAuthMethod == authMethodKey {
+						switch m.formAuthMethod {
+						case authMethodKey:
 							focusedInputIndex = 5 // Actual index for Key Path
-						} else if m.formAuthMethod == authMethodPassword {
+						case authMethodPassword:
 							focusedInputIndex = 6 // Actual index for Password
 						}
 					}
@@ -914,12 +915,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.configCursor > 0 { // Stop at "local" (index 0)
 					m.configCursor--
 				}
-				m.sshConfigViewport.LineUp(1)
+				m.sshConfigViewport.ScrollUp(1)
 			case key.Matches(msg, m.keymap.Down):
 				if m.configCursor < totalItems-1 { // Stop at the last item
 					m.configCursor++
 				}
-				m.sshConfigViewport.LineDown(1)
+				m.sshConfigViewport.ScrollDown(1)
 			case key.Matches(msg, m.keymap.PgUp), key.Matches(msg, m.keymap.Home):
 				m.sshConfigViewport, vpCmd = m.sshConfigViewport.Update(msg)
 				cmds = append(cmds, vpCmd)
@@ -1067,12 +1068,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.importCursor > 0 {
 					m.importCursor--
 				}
-				m.importSelectViewport.LineUp(1)
+				m.importSelectViewport.ScrollUp(1)
 			case key.Matches(msg, m.keymap.Down):
 				if m.importCursor < len(m.importableHosts)-1 {
 					m.importCursor++
 				}
-				m.importSelectViewport.LineDown(1)
+				m.importSelectViewport.ScrollDown(1)
 			case key.Matches(msg, m.keymap.PgUp), key.Matches(msg, m.keymap.Home):
 				m.importSelectViewport, vpCmd = m.importSelectViewport.Update(msg)
 				cmds = append(cmds, vpCmd)
@@ -1150,7 +1151,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !isScrollKey {
 					cmds = append(cmds, m.handleSshImportDetailsFormKeys(msg)...)
 				}
-			} // <<< Add missing closing brace for the inner switch here
+			}
 
 		case statePruneConfirm:
 			switch {
@@ -1320,7 +1321,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stackStatuses[msg.stackIdentifier] = msg.statusInfo
 
 	case stepFinishedMsg:
-		if m.currentState == stateSshConfigRemoveConfirm {
+		switch m.currentState {
+		case stateSshConfigRemoveConfirm:
 			if msg.err != nil {
 				m.lastError = fmt.Errorf("failed to remove host: %w", msg.err)
 				m.currentState = stateSshConfigList
@@ -1329,7 +1331,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentState = stateSshConfigList
 				cmds = append(cmds, loadSshConfigCmd())
 			}
-		} else if m.currentState == stateRunningSequence {
+		case stateRunningSequence:
 			m.outputChan = nil
 			m.errorChan = nil
 			if msg.err != nil {
@@ -1358,7 +1360,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, m.startNextStepCmd())
 				}
 			}
-		} else if m.currentState == stateRunningHostAction {
+		case stateRunningHostAction:
 			// Handle host action completion
 			m.outputChan = nil
 			m.errorChan = nil
@@ -1384,11 +1386,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case channelsAvailableMsg:
-		if m.currentState == stateRunningSequence {
+		switch m.currentState {
+		case stateRunningSequence:
 			m.outputChan = msg.outChan
 			m.errorChan = msg.errChan
 			cmds = append(cmds, waitForOutputCmd(m.outputChan), waitForErrorCmd(m.errorChan))
-		} else if m.currentState == stateRunningHostAction {
+		case stateRunningHostAction:
 			m.outputChan = msg.outChan
 			m.errorChan = msg.errChan
 			// Use the same waitForOutputCmd, but need a way to distinguish error source if needed
@@ -1463,10 +1466,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *model) handleSshAddFormKeys(msg tea.KeyMsg) []tea.Cmd {
 	var cmds []tea.Cmd
 	focusMap := []int{0, 1, 2, 3, 4, 5} // Logical indices: Name, Host, User, Port, Root, AuthMethod
-	if m.formAuthMethod == authMethodKey {
+	switch m.formAuthMethod {
+	case authMethodKey:
 		focusMap = append(focusMap, 6) // Add KeyPath index
-	} else if m.formAuthMethod == authMethodPassword {
-		focusMap = append(focusMap, 7)
+	case authMethodPassword:
+		focusMap = append(focusMap, 7) // Add Password index
 	}
 	currentIndexInMap := -1
 	for i, logicalIndex := range focusMap {
@@ -1488,7 +1492,7 @@ func (m *model) handleSshAddFormKeys(msg tea.KeyMsg) []tea.Cmd {
 			m.formFocusIndex = focusMap[nextIndexInMap]
 		}
 	case key.Matches(msg, m.keymap.Left), key.Matches(msg, m.keymap.Right):
-		if m.formFocusIndex == 5 {
+		if m.formFocusIndex == 5 { // Focus is on Auth Method selector
 			if key.Matches(msg, m.keymap.Left) {
 				m.formAuthMethod--
 				if m.formAuthMethod < authMethodKey {
@@ -1503,6 +1507,7 @@ func (m *model) handleSshAddFormKeys(msg tea.KeyMsg) []tea.Cmd {
 			m.formError = nil
 		}
 	case key.Matches(msg, m.keymap.Enter):
+		// Prevent submitting when focus is on the non-input Auth Method selector
 		if m.formFocusIndex == 5 {
 			return cmds
 		}
@@ -1515,21 +1520,22 @@ func (m *model) handleSshAddFormKeys(msg tea.KeyMsg) []tea.Cmd {
 		}
 	}
 
+	// Update Input Focus Styles
 	for i := range m.formInputs {
 		m.formInputs[i].Blur()
 		m.formInputs[i].Prompt = "  "
 		m.formInputs[i].TextStyle = lipgloss.NewStyle()
 	}
 
-	var focusedInputIndex int = -1
+	focusedInputIndex := -1
 	switch m.formFocusIndex {
-	case 0, 1, 2, 3, 4:
+	case 0, 1, 2, 3, 4: // Name, Hostname, User, Port, RemoteRoot
 		focusedInputIndex = m.formFocusIndex
-	case 6:
+	case 6: // Key Path (only focusable if authMethodKey)
 		if m.formAuthMethod == authMethodKey {
 			focusedInputIndex = 5
 		}
-	case 7:
+	case 7: // Password (only focusable if authMethodPassword)
 		if m.formAuthMethod == authMethodPassword {
 			focusedInputIndex = 6
 		}
@@ -1547,9 +1553,10 @@ func (m *model) handleSshAddFormKeys(msg tea.KeyMsg) []tea.Cmd {
 func (m *model) handleSshEditFormKeys(msg tea.KeyMsg) []tea.Cmd {
 	var cmds []tea.Cmd
 	focusMap := []int{0, 1, 2, 3, 4, 5} // Logical indices: Name, Host, User, Port, Root, AuthMethod
-	if m.formAuthMethod == authMethodKey {
+	switch m.formAuthMethod {
+	case authMethodKey:
 		focusMap = append(focusMap, 6) // Add KeyPath index
-	} else if m.formAuthMethod == authMethodPassword {
+	case authMethodPassword:
 		focusMap = append(focusMap, 7) // Add Password index
 	}
 	focusMap = append(focusMap, 8) // Add Disabled index
@@ -1580,7 +1587,7 @@ func (m *model) handleSshEditFormKeys(msg tea.KeyMsg) []tea.Cmd {
 		}
 
 	case key.Matches(msg, m.keymap.Left), key.Matches(msg, m.keymap.Right):
-		if m.formFocusIndex == authMethodLogicalIndex {
+		if m.formFocusIndex == authMethodLogicalIndex { // Focus is on Auth Method selector
 			if key.Matches(msg, m.keymap.Left) {
 				m.formAuthMethod--
 				if m.formAuthMethod < authMethodKey {
@@ -1595,6 +1602,7 @@ func (m *model) handleSshEditFormKeys(msg tea.KeyMsg) []tea.Cmd {
 			m.formError = nil
 		}
 	case key.Matches(msg, m.keymap.Enter):
+		// Prevent submitting when focus is on non-input selectors
 		if m.formFocusIndex == authMethodLogicalIndex || m.formFocusIndex == disabledToggleLogicalIndex {
 			return cmds
 		}
@@ -1611,21 +1619,22 @@ func (m *model) handleSshEditFormKeys(msg tea.KeyMsg) []tea.Cmd {
 		}
 	}
 
+	// Update Input Focus Styles
 	for i := range m.formInputs {
 		m.formInputs[i].Blur()
 		m.formInputs[i].Prompt = "  "
 		m.formInputs[i].TextStyle = lipgloss.NewStyle()
 	}
 
-	var focusedInputIndex int = -1
+	focusedInputIndex := -1
 	switch m.formFocusIndex {
-	case 0, 1, 2, 3, 4:
+	case 0, 1, 2, 3, 4: // Name, Hostname, User, Port, RemoteRoot
 		focusedInputIndex = m.formFocusIndex
-	case 6:
+	case 6: // Key Path (only focusable if authMethodKey)
 		if m.formAuthMethod == authMethodKey {
 			focusedInputIndex = 5
 		}
-	case 7:
+	case 7: // Password (only focusable if authMethodPassword)
 		if m.formAuthMethod == authMethodPassword {
 			focusedInputIndex = 6
 		}
@@ -1780,11 +1789,12 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 		m.formInputs[remoteRootInputIdx].TextStyle = cursorStyle
 	case keyOrPasswordFocusIndex:
 		if authNeeded {
-			if m.formAuthMethod == authMethodKey {
+			switch m.formAuthMethod {
+			case authMethodKey:
 				cmds = append(cmds, m.formInputs[keyPathInputIdx].Focus())
 				m.formInputs[keyPathInputIdx].Prompt = cursorStyle.Render("> ")
 				m.formInputs[keyPathInputIdx].TextStyle = cursorStyle
-			} else if m.formAuthMethod == authMethodPassword {
+			case authMethodPassword:
 				cmds = append(cmds, m.formInputs[passwordInputIdx].Focus())
 				m.formInputs[passwordInputIdx].Prompt = cursorStyle.Render("> ")
 				m.formInputs[passwordInputIdx].TextStyle = cursorStyle
@@ -1981,7 +1991,7 @@ func (m *model) handleStackListKeys(msg tea.KeyMsg) []tea.Cmd {
 			m.cursor = 0
 		}
 		cursorMoved = true
-		m.viewport.ViewUp()
+		m.viewport.PageUp()
 	case key.Matches(msg, m.keymap.PgDown):
 		m.cursor += m.viewport.Height
 		lastIdx := len(m.stacks) - 1
@@ -1989,7 +1999,7 @@ func (m *model) handleStackListKeys(msg tea.KeyMsg) []tea.Cmd {
 			m.cursor = lastIdx
 		}
 		cursorMoved = true
-		m.viewport.ViewDown()
+		m.viewport.PageDown()
 	default:
 		switch {
 		case key.Matches(msg, m.keymap.Select):
@@ -2130,21 +2140,22 @@ func (m *model) renderStackStatus(b *strings.Builder, stackID string) {
 			statusStr = statusLoadingStyle.Render(" [?]")
 		}
 	}
-	b.WriteString(fmt.Sprintf("\nOverall Status:%s\n", statusStr))
+	fmt.Fprintf(b, "\nOverall Status:%s\n", statusStr)
 	if !isLoading && loaded && statusInfo.Error != nil {
-		b.WriteString(errorStyle.Render(fmt.Sprintf("  Error fetching status: %v\n", statusInfo.Error)))
+		// Pass the rendered string as an argument to avoid non-constant format string error
+		fmt.Fprintf(b, "%s", errorStyle.Render(fmt.Sprintf("  Error fetching status: %v\n", statusInfo.Error)))
 	}
 	if !isLoading && loaded && len(statusInfo.Containers) > 0 {
 		b.WriteString("\nContainers:\n")
-		b.WriteString(fmt.Sprintf("  %-20s %-30s %s\n", "SERVICE", "CONTAINER NAME", "STATUS"))
-		b.WriteString(fmt.Sprintf("  %-20s %-30s %s\n", "-------", "--------------", "------"))
+		fmt.Fprintf(b, "  %-20s %-30s %s\n", "SERVICE", "CONTAINER NAME", "STATUS")
+		fmt.Fprintf(b, "  %-20s %-30s %s\n", "-------", "--------------", "------")
 		for _, c := range statusInfo.Containers {
 			isUp := strings.Contains(strings.ToLower(c.Status), "running") || strings.Contains(strings.ToLower(c.Status), "healthy") || strings.HasPrefix(c.Status, "Up")
 			statusRenderFunc := statusDownStyle.Render
 			if isUp {
 				statusRenderFunc = statusUpStyle.Render
 			}
-			b.WriteString(fmt.Sprintf("  %-20s %-30s %s\n", c.Service, c.Name, statusRenderFunc(c.Status)))
+			fmt.Fprintf(b, "  %-20s %-30s %s\n", c.Service, c.Name, statusRenderFunc(c.Status))
 		}
 	} else if !isLoading && loaded && statusInfo.OverallStatus != runner.StatusError {
 		b.WriteString("\n  (No containers found or running)\n")
@@ -2536,9 +2547,10 @@ func (m *model) View() string {
 		}
 		helpText := "[←/→ to change]"
 		bodyContent.WriteString(fmt.Sprintf("%s%s\n", authFocus, authStyle.Render("Auth Method: "+authMethodStr+" "+helpText)))
-		if m.formAuthMethod == authMethodKey {
+		switch m.formAuthMethod {
+		case authMethodKey:
 			bodyContent.WriteString(m.formInputs[5].View() + "\n")
-		} else if m.formAuthMethod == authMethodPassword {
+		case authMethodPassword:
 			bodyContent.WriteString(m.formInputs[6].View() + "\n")
 		}
 		if m.formError != nil {

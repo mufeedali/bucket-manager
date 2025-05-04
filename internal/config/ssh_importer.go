@@ -4,6 +4,7 @@
 package config
 
 import (
+	"bucket-manager/internal/logger"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -88,7 +89,7 @@ func ParseSSHConfig() ([]PotentialHost, error) {
 				keyPath = resolvedKeyPath
 			} else {
 				// Log warning but keep original path if resolution fails
-				fmt.Fprintf(os.Stderr, "Warning: could not resolve key path '%s' for host '%s': %v\n", keyPath, alias, resolveErr)
+				logger.Errorf("Warning: could not resolve key path '%s' for host '%s': %v", keyPath, alias, resolveErr)
 			}
 		}
 

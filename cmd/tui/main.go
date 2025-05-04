@@ -6,6 +6,7 @@ package tui
 import (
 	"bucket-manager/internal/config"
 	"bucket-manager/internal/discovery"
+	"bucket-manager/internal/logger"
 	"bucket-manager/internal/runner"
 	"bucket-manager/internal/ssh"
 	"bucket-manager/internal/ui"
@@ -16,6 +17,9 @@ import (
 )
 
 func RunTUI() {
+	// Initialize logger for TUI mode (logs to file only)
+	logger.InitLogger(true)
+
 	if err := config.EnsureConfigDir(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error ensuring config directory: %v\n", err)
 		os.Exit(1)

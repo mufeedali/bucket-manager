@@ -5,6 +5,7 @@ package ssh
 
 import (
 	"bucket-manager/internal/config"
+	"bucket-manager/internal/logger"
 	"fmt"
 	"net"
 	"os"
@@ -37,7 +38,9 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 			m.mu.Unlock()
 			return client, nil
 		}
-		client.Close()
+		if err := client.Close(); err != nil {
+			logger.Errorf("Error closing existing SSH client for %s during reconnect: %v", hostConfig.Name, err)
+		}
 		delete(m.clients, hostConfig.Name)
 	}
 	m.mu.Unlock() // Unlock before potentially long Dial operation
@@ -73,7 +76,9 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 	existingClient, found := m.clients[hostConfig.Name]
 	if found {
 		m.mu.Unlock()
-		newClient.Close()
+		if err := newClient.Close(); err != nil {
+			logger.Errorf("Error closing redundant SSH client for %s: %v", hostConfig.Name, err)
+		}
 		return existingClient, nil
 	}
 	m.clients[hostConfig.Name] = newClient
@@ -88,7 +93,7 @@ func (m *Manager) getAuthMethods(hostConfig config.SSHHost) ([]ssh.AuthMethod, e
 	if hostConfig.KeyPath != "" {
 		keyPath, resolveErr := config.ResolvePath(hostConfig.KeyPath)
 		if resolveErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not resolve key path '%s': %v\n", hostConfig.KeyPath, resolveErr)
+			logger.Errorf("Warning: could not resolve key path '%s': %v", hostConfig.KeyPath, resolveErr)
 			keyPath = hostConfig.KeyPath
 		}
 
@@ -125,7 +130,9 @@ func (m *Manager) CloseAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for name, client := range m.clients {
-		client.Close()
+		if err := client.Close(); err != nil {
+			logger.Errorf("Error closing SSH client for %s: %v", name, err)
+		}
 		delete(m.clients, name)
 	}
 }
@@ -134,7 +141,9 @@ func (m *Manager) Close(hostName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if client, found := m.clients[hostName]; found {
-		client.Close()
+		if err := client.Close(); err != nil {
+			logger.Errorf("Error closing SSH client for %s: %v", hostName, err)
+		}
 		delete(m.clients, hostName)
 	}
 }

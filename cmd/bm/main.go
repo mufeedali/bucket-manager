@@ -8,9 +8,13 @@ import (
 
 	"bucket-manager/cmd/cli"
 	"bucket-manager/cmd/tui"
+	"bucket-manager/internal/logger"
 )
 
 func main() {
+	// Initialize logger for CLI mode (logs to file and stderr)
+	logger.InitLogger(false)
+
 	if len(os.Args) <= 1 {
 		tui.RunTUI()
 	} else {

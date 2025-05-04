@@ -5,6 +5,7 @@ package discovery
 
 import (
 	"bucket-manager/internal/config"
+	"bucket-manager/internal/logger"
 	"bucket-manager/internal/ssh"
 	"bucket-manager/internal/util"
 	"bufio"
@@ -55,11 +56,11 @@ func (s Stack) Identifier() string {
 func GetComposeRootDirectory() (string, error) {
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not load config to check local_root: %v\n", err)
+		logger.Errorf("Warning: could not load config to check local_root: %v", err)
 	} else if cfg.LocalRoot != "" {
 		localRootPath, resolveErr := config.ResolvePath(cfg.LocalRoot)
 		if resolveErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not resolve configured local_root path '%s': %v\n", cfg.LocalRoot, resolveErr)
+			logger.Errorf("Warning: could not resolve configured local_root path '%s': %v", cfg.LocalRoot, resolveErr)
 			localRootPath = cfg.LocalRoot // Use original path for Stat check
 		}
 
@@ -92,7 +93,7 @@ func GetComposeRootDirectory() (string, error) {
 			return dir, nil
 		}
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(os.Stderr, "Warning: error checking default directory %s: %v\n", dir, err)
+			logger.Errorf("Warning: error checking default directory %s: %v", dir, err)
 		}
 	}
 
@@ -211,10 +212,10 @@ func FindLocalStacks(rootDir string) ([]Stack, error) {
 			// If one exists, we don't care about errors on the other.
 			// If neither exists, report the error from the first check (yaml) if it wasn't NotExist.
 			if !os.IsNotExist(errYaml) {
-				fmt.Fprintf(os.Stderr, "Warning: could not stat compose files in local stack %s: %v\n", stackPath, errYaml)
+				logger.Errorf("Warning: could not stat compose files in local stack %s: %v", stackPath, errYaml)
 			} else if !os.IsNotExist(errYml) {
 				// If yaml was NotExist, but yml had a different error, report that.
-				fmt.Fprintf(os.Stderr, "Warning: could not stat compose files in local stack %s: %v\n", stackPath, errYml)
+				logger.Errorf("Warning: could not stat compose files in local stack %s: %v", stackPath, errYml)
 			}
 			// If both were os.IsNotExist, we simply skip the directory.
 		}
@@ -247,7 +248,9 @@ func FindRemoteStacks(hostConfig *config.SSHHost) ([]Stack, error) {
 		}
 		resolveCmd := fmt.Sprintf("cd %s && pwd", util.QuoteArgForShell(targetRemoteRoot))
 		pwdOutput, resolveErr = session.CombinedOutput(resolveCmd)
-		session.Close()
+		if err := session.Close(); err != nil {
+			logger.Errorf("Error closing SSH session for %s (resolve path): %v", hostConfig.Name, err)
+		}
 		if resolveErr != nil {
 			return nil, fmt.Errorf("failed to resolve configured remote root path '%s' on host %s: %w\nOutput: %s", targetRemoteRoot, hostConfig.Name, resolveErr, string(pwdOutput))
 		}
@@ -262,7 +265,6 @@ func FindRemoteStacks(hostConfig *config.SSHHost) ([]Stack, error) {
 			}
 			resolveCmd := fmt.Sprintf("cd %s && pwd", util.QuoteArgForShell(fallback))
 			pwdOutput, resolveErr = session.CombinedOutput(resolveCmd)
-			session.Close()
 
 			if resolveErr == nil {
 				targetRemoteRoot = fallback
@@ -285,7 +287,7 @@ func FindRemoteStacks(hostConfig *config.SSHHost) ([]Stack, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create second ssh session for discovery on %s: %w", hostConfig.Name, err)
 	}
-	defer findSession.Close()
+	// No explicit session.Close() needed here for findSession; CombinedOutput handles the lifecycle.
 
 	// Command to find directories containing compose.y*ml one level deep using fd (representing stack roots)
 	remoteFindCmd := fmt.Sprintf(
@@ -308,7 +310,7 @@ func FindRemoteStacks(hostConfig *config.SSHHost) ([]Stack, error) {
 
 		relativePath, err := filepath.Rel(absoluteRemoteRoot, fullPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not calculate relative path for '%s' from resolved root '%s' on host %s: %v\n", fullPath, absoluteRemoteRoot, hostConfig.Name, err)
+			logger.Errorf("Warning: could not calculate relative path for '%s' from resolved root '%s' on host %s: %v", fullPath, absoluteRemoteRoot, hostConfig.Name, err)
 			continue
 		}
 		relativePath = filepath.ToSlash(relativePath) // Ensure forward slashes

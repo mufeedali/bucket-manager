@@ -6,6 +6,7 @@ package cli
 import (
 	"bucket-manager/internal/config"
 	"bucket-manager/internal/discovery"
+	"bucket-manager/internal/logger"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,12 +28,12 @@ To revert to default behavior, set the path to an empty string: bm config set-lo
 
 		cfg, err := config.LoadConfig()
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
+			logger.Errorf("Error loading configuration: %v", err)
 			os.Exit(1)
 		}
 
 		if localRootPath != "" && !strings.HasPrefix(localRootPath, "/") && !strings.HasPrefix(localRootPath, "~/") {
-			errorColor.Fprintf(os.Stderr, "Error: Path must be absolute or start with '~/'\n")
+			logger.Error("Error: Path must be absolute or start with '~/'")
 			os.Exit(1)
 		}
 
@@ -40,7 +41,7 @@ To revert to default behavior, set the path to an empty string: bm config set-lo
 
 		err = config.SaveConfig(cfg)
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error saving configuration: %v\n", err)
+			logger.Errorf("Error saving configuration: %v", err)
 			os.Exit(1)
 		}
 
@@ -59,7 +60,7 @@ var configGetLocalRootCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := config.LoadConfig()
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
+			logger.Errorf("Error loading configuration: %v", err)
 			os.Exit(1)
 		}
 
@@ -69,7 +70,9 @@ var configGetLocalRootCmd = &cobra.Command{
 			if resolveErr == nil {
 				fmt.Printf("Resolved path:         %s\n", resolvedPath)
 			} else {
-				errorColor.Printf("Warning: Could not resolve configured path: %v\n", resolveErr)
+				// This is more of a warning for the user, keep as Printf for now, or enhance logger later
+				// logger.Warnf("Could not resolve configured path: %v", resolveErr)
+				fmt.Printf("Warning: Could not resolve configured path: %v\n", resolveErr) // Keep direct print for now
 			}
 		} else {
 			fmt.Println("Local root not explicitly configured.")
@@ -97,13 +100,17 @@ var configGetLocalRootCmd = &cobra.Command{
 
 		} else if strings.Contains(activeErr.Error(), "could not find") {
 			if cfg.LocalRoot != "" {
-				errorColor.Printf("Warning: Configured path '%s' not found, and no default path exists.\n", cfg.LocalRoot)
+				// Keep direct print for now
+				fmt.Printf("Warning: Configured path '%s' not found, and no default path exists.\n", cfg.LocalRoot)
+				// logger.Warnf("Configured path '%s' not found, and no default path exists.", cfg.LocalRoot)
 			} else {
-				errorColor.Println("Warning: Neither default path exists.")
+				// Keep direct print for now
+				fmt.Println("Warning: Neither default path exists.")
+				// logger.Warn("Neither default path exists.")
 			}
 		} else {
-			// Report other errors encountered during discovery check
-			errorColor.Printf("Error determining effective path: %v\n", activeErr)
+			// Report other errors encountered during discovery check - use logger
+			logger.Errorf("Error determining effective path: %v", activeErr)
 		}
 	},
 }

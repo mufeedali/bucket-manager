@@ -5,6 +5,7 @@ package cli
 
 import (
 	"bucket-manager/internal/config"
+	"bucket-manager/internal/logger"
 	"bufio"
 	"fmt"
 	"os"
@@ -36,7 +37,7 @@ var sshListCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := config.LoadConfig()
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
+			logger.Errorf("Error loading configuration: %v", err)
 			os.Exit(1)
 		}
 
@@ -76,7 +77,7 @@ var sshAddCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := config.LoadConfig()
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
+			logger.Errorf("Error loading configuration: %v", err)
 			os.Exit(1)
 		}
 
@@ -87,51 +88,51 @@ var sshAddCmd = &cobra.Command{
 
 		newHost.Name, inputErr = promptString("Unique Name (e.g., 'server1', 'kumo-prod'):", true)
 		if inputErr != nil {
-			errorColor.Fprintf(os.Stderr, "Error reading name: %v\n", inputErr)
+			logger.Errorf("Error reading name: %v", inputErr)
 			os.Exit(1)
 		}
 		for _, h := range cfg.SSHHosts {
 			if h.Name == newHost.Name {
-				errorColor.Fprintf(os.Stderr, "Error: SSH host with name '%s' already exists.\n", newHost.Name)
+				logger.Errorf("Error: SSH host with name '%s' already exists.", newHost.Name)
 				os.Exit(1)
 			}
 		}
 
 		newHost.Hostname, inputErr = promptString("Hostname or IP Address:", true)
 		if inputErr != nil {
-			errorColor.Fprintf(os.Stderr, "Error reading hostname: %v\n", inputErr)
+			logger.Errorf("Error reading hostname: %v", inputErr)
 			os.Exit(1)
 		}
 
 		newHost.User, inputErr = promptString("SSH Username:", true)
 		if inputErr != nil {
-			errorColor.Fprintf(os.Stderr, "Error reading username: %v\n", inputErr)
+			logger.Errorf("Error reading username: %v", inputErr)
 			os.Exit(1)
 		}
 
 		newHost.Port, inputErr = promptOptionalInt("SSH Port", 22)
 		if inputErr != nil {
-			errorColor.Fprintf(os.Stderr, "Error reading port: %v\n", inputErr)
+			logger.Errorf("Error reading port: %v", inputErr)
 			os.Exit(1)
 		}
 
 		prompt := "Remote Root Path (optional, defaults to ~/bucket or ~/compose-bucket):"
 		newHost.RemoteRoot, inputErr = promptString(prompt, false)
 		if inputErr != nil {
-			errorColor.Fprintf(os.Stderr, "Error reading remote root: %v\n", inputErr)
+			logger.Errorf("Error reading remote root: %v", inputErr)
 			os.Exit(1)
 		}
 
 		inputErr = promptForAuthDetails(&newHost, false, "") // false for isEditing, empty original password
 		if inputErr != nil {
-			errorColor.Fprintf(os.Stderr, "Error getting authentication details: %v\n", inputErr)
+			logger.Errorf("Error getting authentication details: %v", inputErr)
 			os.Exit(1)
 		}
 
 		cfg.SSHHosts = append(cfg.SSHHosts, newHost)
 		err = config.SaveConfig(cfg)
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error saving configuration: %v\n", err)
+			logger.Errorf("Error saving configuration: %v", err)
 			os.Exit(1)
 		}
 
@@ -145,7 +146,7 @@ var sshEditCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := config.LoadConfig()
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
+			logger.Errorf("Error loading configuration: %v", err)
 			os.Exit(1)
 		}
 
@@ -161,13 +162,13 @@ var sshEditCmd = &cobra.Command{
 
 		choiceStr, err := promptString("Enter the number of the host to edit:", true)
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error reading selection: %v\n", err)
+			logger.Errorf("Error reading selection: %v", err)
 			os.Exit(1)
 		}
 
 		choice, err := strconv.Atoi(choiceStr)
 		if err != nil || choice < 1 || choice > len(cfg.SSHHosts) {
-			errorColor.Fprintf(os.Stderr, "Invalid selection '%s'.\n", choiceStr)
+			logger.Errorf("Invalid selection '%s'.", choiceStr)
 			os.Exit(1)
 		}
 
@@ -181,7 +182,7 @@ var sshEditCmd = &cobra.Command{
 
 		editedHost.Name, inputErr = promptString(fmt.Sprintf("Unique Name [%s]:", originalHost.Name), false)
 		if inputErr != nil {
-			errorColor.Fprintf(os.Stderr, "Error reading name: %v\n", inputErr)
+			logger.Errorf("Error reading name: %v", inputErr)
 			os.Exit(1)
 		}
 		if editedHost.Name == "" {
@@ -190,7 +191,7 @@ var sshEditCmd = &cobra.Command{
 			// Check if the new name conflicts with *other* existing hosts
 			for i, h := range cfg.SSHHosts {
 				if i != hostIndex && h.Name == editedHost.Name {
-					errorColor.Fprintf(os.Stderr, "Error: SSH host with name '%s' already exists.\n", editedHost.Name)
+					logger.Errorf("Error: SSH host with name '%s' already exists.", editedHost.Name)
 					os.Exit(1)
 				}
 			}
@@ -198,7 +199,7 @@ var sshEditCmd = &cobra.Command{
 
 		editedHost.Hostname, inputErr = promptString(fmt.Sprintf("Hostname or IP Address [%s]:", originalHost.Hostname), false)
 		if inputErr != nil {
-			errorColor.Fprintf(os.Stderr, "Error reading hostname: %v\n", inputErr)
+			logger.Errorf("Error reading hostname: %v", inputErr)
 			os.Exit(1)
 		}
 		if editedHost.Hostname == "" {
@@ -207,7 +208,7 @@ var sshEditCmd = &cobra.Command{
 
 		editedHost.User, inputErr = promptString(fmt.Sprintf("SSH Username [%s]:", originalHost.User), false)
 		if inputErr != nil {
-			errorColor.Fprintf(os.Stderr, "Error reading username: %v\n", inputErr)
+			logger.Errorf("Error reading username: %v", inputErr)
 			os.Exit(1)
 		}
 		if editedHost.User == "" {
@@ -220,7 +221,7 @@ var sshEditCmd = &cobra.Command{
 		} // Show 22 if original was 0/unset
 		editedHost.Port, inputErr = promptOptionalInt(fmt.Sprintf("SSH Port [%d]", portDefault), portDefault)
 		if inputErr != nil {
-			errorColor.Fprintf(os.Stderr, "Error reading port: %v\n", inputErr)
+			logger.Errorf("Error reading port: %v", inputErr)
 			os.Exit(1)
 		}
 		if editedHost.Port == 22 {
@@ -234,19 +235,19 @@ var sshEditCmd = &cobra.Command{
 		}
 		editedHost.RemoteRoot, inputErr = promptString(fmt.Sprintf("%s [%s]:", remoteRootPrompt, currentRemoteRootDisplay), false)
 		if inputErr != nil {
-			errorColor.Fprintf(os.Stderr, "Error reading remote root: %v\n", inputErr)
+			logger.Errorf("Error reading remote root: %v", inputErr)
 			os.Exit(1)
 		}
 		inputErr = promptForAuthDetails(&editedHost, true, originalHost.Password)
 		if inputErr != nil {
-			errorColor.Fprintf(os.Stderr, "Error getting authentication details: %v\n", inputErr)
+			logger.Errorf("Error getting authentication details: %v", inputErr)
 			os.Exit(1)
 		}
 
 		disablePrompt := fmt.Sprintf("Disable this host? (Currently: %t) (y/N):", originalHost.Disabled)
 		disableChoice, inputErr := promptConfirm(disablePrompt)
 		if inputErr != nil {
-			errorColor.Fprintf(os.Stderr, "Error reading disable choice: %v\n", inputErr)
+			logger.Errorf("Error reading disable choice: %v", inputErr)
 			os.Exit(1)
 		}
 		editedHost.Disabled = disableChoice
@@ -254,7 +255,7 @@ var sshEditCmd = &cobra.Command{
 		cfg.SSHHosts[hostIndex] = editedHost
 		err = config.SaveConfig(cfg)
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error saving configuration: %v\n", err)
+			logger.Errorf("Error saving configuration: %v", err)
 			os.Exit(1)
 		}
 
@@ -268,7 +269,7 @@ var sshRemoveCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := config.LoadConfig()
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
+			logger.Errorf("Error loading configuration: %v", err)
 			os.Exit(1)
 		}
 
@@ -284,13 +285,13 @@ var sshRemoveCmd = &cobra.Command{
 
 		choiceStr, err := promptString("Enter the number of the host to remove:", true)
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error reading selection: %v\n", err)
+			logger.Errorf("Error reading selection: %v", err)
 			os.Exit(1)
 		}
 
 		choice, err := strconv.Atoi(choiceStr)
 		if err != nil || choice < 1 || choice > len(cfg.SSHHosts) {
-			errorColor.Fprintf(os.Stderr, "Invalid selection '%s'.\n", choiceStr)
+			logger.Errorf("Invalid selection '%s'.", choiceStr)
 			os.Exit(1)
 		}
 
@@ -298,7 +299,7 @@ var sshRemoveCmd = &cobra.Command{
 
 		confirmed, err := promptConfirm(fmt.Sprintf("Are you sure you want to remove host '%s'?", hostToRemove.Name))
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error reading confirmation: %v\n", err)
+			logger.Errorf("Error reading confirmation: %v", err)
 			os.Exit(1)
 		}
 
@@ -311,7 +312,7 @@ var sshRemoveCmd = &cobra.Command{
 
 		err = config.SaveConfig(cfg)
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error saving configuration: %v\n", err)
+			logger.Errorf("Error saving configuration: %v", err)
 			os.Exit(1)
 		}
 
@@ -325,13 +326,13 @@ var sshImportCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := config.LoadConfig()
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error loading current configuration: %v\n", err)
+			logger.Errorf("Error loading current configuration: %v", err)
 			os.Exit(1)
 		}
 
 		potentialHosts, err := config.ParseSSHConfig()
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error parsing ~/.ssh/config: %v\n", err)
+			logger.Errorf("Error parsing ~/.ssh/config: %v", err)
 			os.Exit(1)
 		}
 
@@ -368,7 +369,7 @@ var sshImportCmd = &cobra.Command{
 		fmt.Println("\nEnter the numbers of the hosts you want to import (comma-separated), or 'all':")
 		choiceStr, err := promptString("Import selection:", true)
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "Error reading selection: %v\n", err)
+			logger.Errorf("Error reading selection: %v", err)
 			os.Exit(1)
 		}
 
@@ -380,7 +381,7 @@ var sshImportCmd = &cobra.Command{
 			for _, indexStr := range indices {
 				index, err := strconv.Atoi(strings.TrimSpace(indexStr))
 				if err != nil || index < 1 || index > len(potentialHosts) { // Check against original list length for index validity
-					errorColor.Fprintf(os.Stderr, "Invalid selection '%s'. Please enter numbers corresponding to the list.\n", indexStr)
+					logger.Errorf("Invalid selection '%s'. Please enter numbers corresponding to the list.", indexStr)
 					os.Exit(1)
 				}
 				// Find the corresponding host in the *importable* list
@@ -394,7 +395,7 @@ var sshImportCmd = &cobra.Command{
 					}
 				}
 				if !foundInImportable {
-					errorColor.Fprintf(os.Stderr, "Host '%s' (number %d) cannot be imported (e.g., name conflict).\n", selectedPotentialHost.Alias, index)
+					logger.Errorf("Host '%s' (number %d) cannot be imported (e.g., name conflict).", selectedPotentialHost.Alias, index)
 					// Optionally continue or exit; let's exit for simplicity
 					os.Exit(1)
 				}
@@ -414,20 +415,20 @@ var sshImportCmd = &cobra.Command{
 			// Use alias as default bm name, check for conflicts again just in case
 			bmName := pHost.Alias
 			if _, exists := currentConfigNames[bmName]; exists {
-				errorColor.Fprintf(os.Stderr, "Error: Name '%s' conflicts with an existing host. Skipping import.\n", bmName)
+				logger.Errorf("Error: Name '%s' conflicts with an existing host. Skipping import.", bmName)
 				continue
 			}
 
 			remoteRootPrompt := "Remote Root Path (optional, defaults to ~/bucket or ~/compose-bucket):"
 			remoteRoot, err := promptString(remoteRootPrompt, false)
 			if err != nil {
-				errorColor.Fprintf(os.Stderr, "Error reading remote root for '%s': %v. Skipping import.\n", bmName, err)
+				logger.Errorf("Error reading remote root for '%s': %v. Skipping import.", bmName, err)
 				continue
 			}
 
 			bmHost, err := config.ConvertToBucketManagerHost(pHost, bmName, remoteRoot)
 			if err != nil {
-				errorColor.Fprintf(os.Stderr, "Error converting host '%s': %v. Skipping import.\n", bmName, err)
+				logger.Errorf("Error converting host '%s': %v. Skipping import.", bmName, err)
 				continue
 			}
 
@@ -436,7 +437,7 @@ var sshImportCmd = &cobra.Command{
 				fmt.Printf("Host '%s' imported from ssh_config has no IdentityFile specified.\n", bmName)
 				err = promptForAuthDetails(&bmHost, false, "")
 				if err != nil {
-					errorColor.Fprintf(os.Stderr, "Error getting authentication details for '%s': %v. Skipping import.\n", bmName, err)
+					logger.Errorf("Error getting authentication details for '%s': %v. Skipping import.", bmName, err)
 					continue
 				}
 			}
@@ -454,7 +455,7 @@ var sshImportCmd = &cobra.Command{
 
 		err = config.SaveConfig(cfg)
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "\nError saving configuration: %v\n", err)
+			logger.Errorf("\nError saving configuration: %v", err)
 			os.Exit(1)
 		}
 
@@ -563,7 +564,9 @@ func promptForAuthDetails(host *config.SSHHost, isEditing bool, originalPassword
 	if authChoiceStr != "" {
 		choice, err := strconv.Atoi(authChoiceStr)
 		if err != nil || choice < 1 || choice > 3 {
-			errorColor.Fprintf(os.Stderr, "Invalid choice '%s', using default/current method (%d).\n", authChoiceStr, currentAuthMethod)
+			// This is a warning/fallback, not a critical error stopping execution. Keep direct print.
+			fmt.Fprintf(os.Stderr, "Invalid choice '%s', using default/current method (%d).\n", authChoiceStr, currentAuthMethod)
+			// logger.Warnf("Invalid choice '%s', using default/current method (%d).", authChoiceStr, currentAuthMethod)
 			// Keep newAuthChoice as currentAuthMethod
 		} else {
 			newAuthChoice = choice

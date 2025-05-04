@@ -122,7 +122,7 @@ func RunHostCommand(step HostCommandStep, cliMode bool) (<-chan OutputLine, <-ch
 			if err := session.RequestPty("xterm-256color", 80, 40, modes); err != nil {
 				// Log non-critical error, but continue execution
 				// Some servers might not support PTY allocation but commands might still work
-				// fmt.Fprintf(os.Stderr, "Warning: Failed to request pty for %s (continuing): %v\n", cmdDesc, err)
+				fmt.Fprintf(os.Stderr, "Warning: Failed to request pty for %s (continuing): %v\n", cmdDesc, err)
 				// If PTY is strictly required, return error:
 				// errChan <- fmt.Errorf("failed to request pty for %s: %w", cmdDesc, err)
 				// return
@@ -272,7 +272,7 @@ func streamPipe(pipe io.Reader, outChan chan<- OutputLine, doneChan chan<- struc
 		if err != nil {
 			if err != io.EOF {
 				// Log or handle read errors if necessary
-				// fmt.Fprintf(os.Stderr, "Pipe read error (%v): %v\n", isError, err)
+				fmt.Fprintf(os.Stderr, "Pipe read error (%v): %v\n", isError, err)
 			}
 			break // Exit loop on EOF or other errors
 		}
@@ -337,7 +337,7 @@ func StreamCommand(step CommandStep, cliMode bool) (<-chan OutputLine, <-chan er
 			// Use a common terminal type like xterm-256color
 			if err := session.RequestPty("xterm-256color", 80, 40, modes); err != nil {
 				// Log non-critical error, but continue execution
-				// fmt.Fprintf(os.Stderr, "Warning: Failed to request pty for %s (continuing): %v\n", cmdDesc, err)
+				fmt.Fprintf(os.Stderr, "Warning: Failed to request pty for %s (continuing): %v\n", cmdDesc, err)
 				// If PTY is strictly required, return error:
 				// errChan <- fmt.Errorf("failed to request pty for %s: %w", cmdDesc, err)
 				// return
@@ -618,7 +618,6 @@ func GetStackStatus(stack discovery.Stack) StackRuntimeInfo {
 			info.Error = fmt.Errorf("failed to create ssh session for %s: %w", cmdDesc, sessionErr)
 			return info
 		}
-		defer session.Close()
 
 		if stack.AbsoluteRemoteRoot == "" {
 			info.OverallStatus = StatusError

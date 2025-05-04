@@ -6,6 +6,7 @@ package cli
 import (
 	"bucket-manager/internal/config"
 	"bucket-manager/internal/discovery"
+	"bucket-manager/internal/logger"
 	"bucket-manager/internal/runner"
 	"bucket-manager/internal/ssh"
 	"fmt"
@@ -705,7 +706,7 @@ func runStackAction(action string, args []string) {
 
 	err = runSequence(targetStack, sequence)
 	if err != nil {
-		errorColor.Fprintf(os.Stderr, "\n'%s' action failed for %s (%s): %v\n", action, targetStack.Name, targetStack.ServerName, err)
+		logger.Errorf("\n'%s' action failed for %s (%s): %v", action, targetStack.Name, targetStack.ServerName, err)
 		os.Exit(1)
 	}
 	successColor.Printf("'%s' action completed successfully for %s (%s).\n", action, targetStack.Name, identifierColor.Sprint(targetStack.ServerName))
@@ -792,9 +793,9 @@ Otherwise, shows status for all discovered stacks.`,
 
 		// Handle Discovery Errors
 		if len(collectedErrors) > 0 {
-			errorColor.Fprintln(os.Stderr, "\nErrors during stack discovery:")
+			logger.Error("\nErrors during stack discovery:")
 			for _, err := range collectedErrors {
-				errorColor.Fprintf(os.Stderr, "- %v\n", err)
+				logger.Errorf("- %v", err)
 			}
 			// Exit if discovery failed completely, otherwise continue with found stacks
 			if len(stacksToProcess) == 0 {
@@ -811,10 +812,6 @@ Otherwise, shows status for all discovered stacks.`,
 		if len(stacksToProcess) == 0 {
 			if scanAll {
 				fmt.Println("\nNo Podman Compose stacks found locally or on configured remote hosts.")
-			} else {
-				// Error message for specific identifier not found is handled by discoverTargetStacks returning an error
-				// No need to print a generic one here if collectedErrors is empty.
-				// errorColor.Fprintf(os.Stderr, "\nError: No stacks found matching identifier '%s'.\n", discoveryIdentifier)
 			}
 			// Exit if no stacks to process AND no prior discovery errors occurred
 			if len(collectedErrors) == 0 {
@@ -863,9 +860,9 @@ Otherwise, shows status for all discovered stacks.`,
 					err := fmt.Errorf("status check for %s failed: %w", statusInfo.Stack.Identifier(), statusInfo.Error)
 					collectedErrors = append(collectedErrors, err)
 					if statusInfo.Error != nil {
-						errorColor.Fprintf(os.Stderr, "  Error checking status: %v\n", statusInfo.Error)
+						logger.Errorf("  Error checking status: %v", statusInfo.Error)
 					} else {
-						errorColor.Fprintf(os.Stderr, "  Unknown error checking status.\n")
+						logger.Error("  Unknown error checking status.")
 					}
 				default: // Should not happen, but handle defensively
 					fmt.Printf("[%s]\n", statusInfo.OverallStatus)
@@ -1010,8 +1007,8 @@ func runHostAction(actionName string, targets []runner.HostTarget) error {
 			if stepErr != nil {
 				err := fmt.Errorf("step '%s' failed for host %s", step.Name, t.ServerName) // Simplified error
 				// Avoid printing error details again if they were part of command output
-				errorColor.Fprintf(os.Stderr, "%v\n", err) // Print simplified error summary
-				errChan <- err                             // Send error to the channel
+				logger.Errorf("%v", err) // Print simplified error summary
+				errChan <- err           // Send error to the channel
 				return
 			}
 			successColor.Printf("--- Step '%s' completed successfully for host %s ---\n", step.Name, identifierColor.Sprint(t.ServerName))
@@ -1107,7 +1104,7 @@ Targets can be 'local', specific remote host names, or left empty to target ALL 
 
 		err = runHostAction("prune", targetsToPrune)
 		if err != nil {
-			errorColor.Fprintf(os.Stderr, "\nPrune action failed for one or more hosts: %v\n", err)
+			logger.Errorf("\nPrune action failed for one or more hosts: %v", err)
 			os.Exit(1)
 		}
 
