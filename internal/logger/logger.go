@@ -52,8 +52,8 @@ func setupLogging(logToFile bool, logToStderr bool) error {
 			if err := os.MkdirAll(logDir, 0750); err != nil {
 				fmt.Fprintf(os.Stderr, "Error creating log directory %s: %v. File logging disabled.\n", logDir, err)
 			} else {
-				// Open file for appending (0640: user rw, group r, others ---)
-				file, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640)
+				// Open file for writing, truncating if it exists (0640: user rw, group r, others ---)
+				file, err := os.OpenFile(logFilePath, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0640)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error opening log file %s: %v. File logging disabled.\n", logFilePath, err)
 				} else {
@@ -83,7 +83,7 @@ func setupLogging(logToFile bool, logToStderr bool) error {
 	// Using JSON handler for structured logging consistency.
 	opts := &slog.HandlerOptions{
 		Level: slog.LevelInfo, // Default level
-		// AddSource: true, // Uncomment to add source file/line to logs
+		// AddSource: true,           // Uncomment to add source file/line to logs
 	}
 	handler := slog.NewJSONHandler(finalWriter, opts)
 	defaultLogger = slog.New(handler)
