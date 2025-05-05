@@ -218,7 +218,7 @@ Refer to the TUI's help bar at the bottom for specific controls within each view
 
 ### Stack Discovery
 
-- **Local:** `bm` looks for directories containing a `compose.yaml` or `docker-compose.yml` file within `~/bucket` and `~/compose-bucket`, or a custom path set via `bm config set-local-root`. Each such directory represents a stack. The first root directory found containing stacks will be used.
+- **Local:** `bm` looks for directories containing a `compose.yaml` or `compose.yml` file within `~/bucket` and `~/compose-bucket`, or a custom path set via `bm config set-local-root`. Each such directory represents a stack. The first root directory found containing stacks will be used.
 - **Remote:** `bm` connects to each configured (and enabled) SSH host and searches for stacks within the host's `remote_root` path (defaulting to `~/bucket` or `~/compose-bucket` on the remote machine if not specified).
 
 ## License

@@ -1123,7 +1123,7 @@ func (m *model) View() string {
 		if m.configCursor == 0 {
 			localCursor = cursorStyle.Render("> ")
 		}
-		bodyContent.WriteString(fmt.Sprintf("%s%s (%s)\n", localCursor, "local", serverNameStyle.Render("Local Docker/Podman")))
+		bodyContent.WriteString(fmt.Sprintf("%s%s (%s)\n", localCursor, "local", serverNameStyle.Render("Local Podman")))
 
 		// Display configured remote hosts
 		if len(m.configuredHosts) == 0 {
