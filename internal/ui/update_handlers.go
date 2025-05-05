@@ -386,20 +386,14 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 		keyOrPasswordFocusIndex = 2 // Logical index for Key Path OR Password input
 	)
 
-	// Determine if auth fields are needed based on the potential host
-	authNeeded := false
-	if m.configuringHostIdx >= 0 && m.configuringHostIdx < len(m.importableHosts) {
-		authNeeded = m.importableHosts[m.configuringHostIdx].KeyPath == ""
-	}
-
 	// Build the map of currently navigable logical indices
-	focusMap := []int{remoteRootFocusIndex} // Remote Root is always present
-	if authNeeded {
-		focusMap = append(focusMap, authMethodFocusIndex) // Add auth selector if needed
-		// Add the specific input based on the selected auth method
-		if m.formAuthMethod == authMethodKey || m.formAuthMethod == authMethodPassword {
-			focusMap = append(focusMap, keyOrPasswordFocusIndex)
-		}
+	// Remote Root and Auth Method are always present. Key/Password depends on selection.
+	focusMap := []int{remoteRootFocusIndex, authMethodFocusIndex}
+	switch m.formAuthMethod {
+	case authMethodKey, authMethodPassword: // Key Path or Password input is navigable
+		focusMap = append(focusMap, keyOrPasswordFocusIndex)
+	case authMethodAgent: // Agent has no specific input field after the selector
+		// No input field to add
 	}
 
 	// Find the current position in the focus map
@@ -425,8 +419,8 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 			m.formError = nil // Clear error on navigation
 		}
 	case key.Matches(msg, m.keymap.Left), key.Matches(msg, m.keymap.Right):
-		// Handle auth method switching only if auth is needed and the selector is focused
-		if authNeeded && m.formFocusIndex == authMethodFocusIndex {
+		// Handle auth method switching only when the selector is focused
+		if m.formFocusIndex == authMethodFocusIndex {
 			if key.Matches(msg, m.keymap.Left) {
 				m.formAuthMethod--
 				if m.formAuthMethod < authMethodKey {
@@ -443,7 +437,7 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 
 	case key.Matches(msg, m.keymap.Enter):
 		// Prevent submitting when focus is on the non-input Auth Method selector
-		if authNeeded && m.formFocusIndex == authMethodFocusIndex {
+		if m.formFocusIndex == authMethodFocusIndex {
 			return cmds // Do nothing
 		}
 
@@ -468,29 +462,27 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 			return cmds
 		}
 
-		// Apply auth details only if they were needed (i.e., not provided in ssh_config)
-		if authNeeded {
-			switch m.formAuthMethod {
-			case authMethodKey:
-				if keyPath == "" {
-					m.formError = fmt.Errorf("key path is required for Key File authentication")
-					return cmds
-				}
-				hostToSave.KeyPath = keyPath
-				hostToSave.Password = "" // Ensure password is clear
-			case authMethodPassword:
-				if password == "" {
-					m.formError = fmt.Errorf("password is required for Password authentication")
-					return cmds
-				}
-				hostToSave.Password = password
-				hostToSave.KeyPath = "" // Ensure key path is clear
-			case authMethodAgent:
-				// Agent selected, ensure both are clear
-				hostToSave.KeyPath = ""
-				hostToSave.Password = ""
+		// Always apply auth details based on the form selection, overriding ssh_config if needed.
+		switch m.formAuthMethod {
+		case authMethodKey:
+			if keyPath == "" {
+				m.formError = fmt.Errorf("key path is required for Key File authentication")
+				return cmds
 			}
-		} // else: Keep the KeyPath from ssh_config (already set by ConvertToBucketManagerHost)
+			hostToSave.KeyPath = keyPath
+			hostToSave.Password = "" // Ensure password is clear
+		case authMethodPassword:
+			if password == "" {
+				m.formError = fmt.Errorf("password is required for Password authentication")
+				return cmds
+			}
+			hostToSave.Password = password
+			hostToSave.KeyPath = "" // Ensure key path is clear
+		case authMethodAgent:
+			// Agent selected, ensure both are clear, overriding any ssh_config key path
+			hostToSave.KeyPath = ""
+			hostToSave.Password = ""
+		}
 
 		// Add the configured host to the list to be saved
 		m.hostsToConfigure = append(m.hostsToConfigure, hostToSave)
@@ -543,14 +535,13 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 	case remoteRootFocusIndex:
 		focusedInputIndex = remoteRootInputIdx
 	case keyOrPasswordFocusIndex:
-		// Only focus if auth is needed
-		if authNeeded {
-			switch m.formAuthMethod {
-			case authMethodKey:
-				focusedInputIndex = keyPathInputIdx
-			case authMethodPassword:
-				focusedInputIndex = passwordInputIdx
-			}
+		// Focus Key Path or Password input based on selected auth method
+		switch m.formAuthMethod {
+		case authMethodKey:
+			focusedInputIndex = keyPathInputIdx
+		case authMethodPassword:
+			focusedInputIndex = passwordInputIdx
+		// No input to focus for authMethodAgent
 		}
 		// No input focus for authMethodFocusIndex
 	}

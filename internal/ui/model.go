@@ -524,7 +524,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
 			default:
-				if !isScrollKey {
+				isCharKey := msg.Type == tea.KeyRunes && len(msg.Runes) == 1
+				if !isScrollKey && !isCharKey {
 					cmds = append(cmds, m.handleSshImportDetailsFormKeys(msg)...)
 				}
 			}
@@ -619,7 +620,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selectedImportIdxs = nil
 		m.hostsToConfigure = nil
 		m.formInputs = nil
-		cmds = append(cmds, loadSshConfigCmd())
+		// Rediscover stacks after import
+		m.currentState = stateLoadingStacks
+		m.isDiscovering = true
+		m.stacks = nil
+		m.discoveryErrors = nil
+		m.stackStatuses = make(map[string]runner.StackRuntimeInfo)
+		m.loadingStatus = make(map[string]bool)
+		m.cursor = 0
+		cmds = append(cmds, loadSshConfigCmd(), findStacksCmd())
 
 	case stackDiscoveredMsg:
 		if m.currentState == stateLoadingStacks {
@@ -704,8 +713,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentState = stateSshConfigList
 				cmds = append(cmds, loadSshConfigCmd())
 			} else {
-				m.currentState = stateSshConfigList
-				cmds = append(cmds, loadSshConfigCmd())
+				// Successful removal
+				m.currentState = stateLoadingStacks // Show loading while rediscovering
+				m.isDiscovering = true
+				m.stacks = nil // Clear existing stacks
+				m.discoveryErrors = nil
+				m.stackStatuses = make(map[string]runner.StackRuntimeInfo) // Clear statuses
+				m.loadingStatus = make(map[string]bool)
+				m.cursor = 0
+				cmds = append(cmds, loadSshConfigCmd(), findStacksCmd()) // Reload config AND rediscover stacks
 			}
 		case stateRunningSequence:
 			m.outputChan = nil
@@ -795,7 +811,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.formError = nil
 				m.formInputs = nil
 				m.configCursor = 0
-				cmds = append(cmds, loadSshConfigCmd())
+				// Rediscover stacks after adding
+				m.currentState = stateLoadingStacks
+				m.isDiscovering = true
+				m.stacks = nil
+				m.discoveryErrors = nil
+				m.stackStatuses = make(map[string]runner.StackRuntimeInfo)
+				m.loadingStatus = make(map[string]bool)
+				cmds = append(cmds, loadSshConfigCmd(), findStacksCmd())
 			}
 		}
 
@@ -809,7 +832,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.formInputs = nil
 				m.hostToEdit = nil
 				m.configCursor = 0
-				cmds = append(cmds, loadSshConfigCmd())
+				// Rediscover stacks after editing
+				m.currentState = stateLoadingStacks
+				m.isDiscovering = true
+				m.stacks = nil
+				m.discoveryErrors = nil
+				m.stackStatuses = make(map[string]runner.StackRuntimeInfo)
+				m.loadingStatus = make(map[string]bool)
+				cmds = append(cmds, loadSshConfigCmd(), findStacksCmd())
 			}
 		}
 

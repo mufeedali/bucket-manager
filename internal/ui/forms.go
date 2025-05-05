@@ -180,7 +180,7 @@ func createImportDetailsForm(pHost config.PotentialHost) ([]textinput.Model, int
 	t.Placeholder = "Remote Root Path (optional, defaults: ~/bucket or ~/compose-bucket)"
 	t.Focus() // Initial focus for this form
 	t.CharLimit = 200
-	t.Width = 60
+	t.Width = 70
 	inputs[4] = t
 
 	// 5: Key Path
