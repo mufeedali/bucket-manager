@@ -152,12 +152,11 @@ func FindStacks() (<-chan Stack, <-chan error, <-chan struct{}) {
 			go func(hc config.SSHHost) {
 				defer wg.Done()
 
-				// Acquire semaphore slot
 				if err := sem.Acquire(ctx, 1); err != nil {
 					errorChan <- fmt.Errorf("failed to acquire semaphore for %s: %w", hc.Name, err)
 					return
 				}
-				defer sem.Release(1) // Release semaphore slot when done
+				defer sem.Release(1)
 
 				remoteStacks, err := FindRemoteStacks(&hc)
 				if err != nil {
@@ -201,10 +200,10 @@ func FindLocalStacks(rootDir string) ([]Stack, error) {
 		if errYaml == nil || errYml == nil {
 			stacks = append(stacks, Stack{
 				Name:       stackName,
-				Path:       stackPath, // Store the absolute local path
+				Path:       stackPath,
 				ServerName: "local",
 				IsRemote:   false,
-				HostConfig: nil, // nil for local stacks
+				HostConfig: nil,
 				// AbsoluteRemoteRoot is empty for local stacks
 			})
 		} else if !os.IsNotExist(errYaml) || !os.IsNotExist(errYml) {
@@ -287,7 +286,7 @@ func FindRemoteStacks(hostConfig *config.SSHHost) ([]Stack, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create second ssh session for discovery on %s: %w", hostConfig.Name, err)
 	}
-	// No explicit session.Close() needed here for findSession; CombinedOutput handles the lifecycle.
+	// CombinedOutput handles the session lifecycle for findSession.
 
 	// Command to find directories containing compose.y*ml one level deep using find (representing stack roots)
 	remoteFindCmd := fmt.Sprintf(

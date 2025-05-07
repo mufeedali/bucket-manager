@@ -14,18 +14,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sync"
-
 	"os/exec"
 	"path/filepath"
-
 	"strings"
-	"syscall"
-
-	gossh "golang.org/x/crypto/ssh"
 )
 
-var sshManager *ssh.Manager
+var sshManager *ssh.Manager // Keep sshManager here as it's used by ssh.go
 
 // InitSSHManager sets the package-level SSH manager instance.
 func InitSSHManager(manager *ssh.Manager) {
@@ -78,56 +72,10 @@ func RunHostCommand(step HostCommandStep, cliMode bool) (<-chan OutputLine, <-ch
 		cmdDesc := fmt.Sprintf("step '%s' for host %s", step.Name, step.Target.ServerName)
 
 		if step.Target.IsRemote {
-			if sshManager == nil {
-				errChan <- fmt.Errorf("ssh manager not initialized for %s", cmdDesc)
-				return
-			}
 			if step.Target.HostConfig == nil {
 				errChan <- fmt.Errorf("internal error: HostConfig is nil for remote host %s", step.Target.ServerName)
 				return
 			}
-
-			client, err := sshManager.GetClient(*step.Target.HostConfig)
-			if err != nil {
-				errChan <- fmt.Errorf("failed to get ssh client for %s: %w", cmdDesc, err)
-				return
-			}
-
-			session, err := client.NewSession()
-			if err != nil {
-				errChan <- fmt.Errorf("failed to create ssh session for %s: %w", cmdDesc, err)
-				return
-			}
-			defer session.Close()
-
-			stdoutPipe, err := session.StdoutPipe()
-			if err != nil {
-				errChan <- fmt.Errorf("failed to get ssh stdout pipe for %s: %w", cmdDesc, err)
-				return
-			}
-			stderrPipe, err := session.StderrPipe()
-			if err != nil {
-				errChan <- fmt.Errorf("failed to get ssh stderr pipe for %s: %w", cmdDesc, err)
-				return
-			}
-
-			// Request a PTY for interactive commands like podman compose (enables color)
-			// Use sensible defaults for terminal type and size.
-			modes := gossh.TerminalModes{
-				gossh.ECHO:          0,     // Disable echoing input
-				gossh.TTY_OP_ISPEED: 14400, // Input speed = 14.4kbaud
-				gossh.TTY_OP_OSPEED: 14400, // Output speed = 14.4kbaud
-			}
-			// Use a common terminal type like xterm-256color
-			if err := session.RequestPty("xterm-256color", 80, 40, modes); err != nil {
-				// Log non-critical error, but continue execution
-				// Some servers might not support PTY allocation but commands might still work
-				fmt.Fprintf(os.Stderr, "Warning: Failed to request pty for %s (continuing): %v\n", cmdDesc, err)
-				// If PTY is strictly required, return error:
-				// errChan <- fmt.Errorf("failed to request pty for %s: %w", cmdDesc, err)
-				// return
-			}
-
 			// Construct the remote command string (command args...) - No cd needed for host commands
 			remoteCmdParts := []string{step.Command}
 			for _, arg := range step.Args {
@@ -135,123 +83,13 @@ func RunHostCommand(step HostCommandStep, cliMode bool) (<-chan OutputLine, <-ch
 			}
 			remoteCmdString := strings.Join(remoteCmdParts, " ")
 
-			if err := session.Start(remoteCmdString); err != nil {
-				errChan <- fmt.Errorf("failed to start remote command for %s: %w", cmdDesc, err)
-				return
-			}
-
-			var cmdErr error
-			if cliMode {
-				// --- CLI Mode: Direct Output ---
-				// Use io.Copy to directly pipe remote output to local stdout/stderr
-				// This handles TTY output correctly (colors, \r)
-				var wg sync.WaitGroup
-				wg.Add(2) // Wait for both stdout and stderr copying
-
-				go func() {
-					defer wg.Done()
-					_, _ = io.Copy(os.Stdout, stdoutPipe) // Ignore errors for now
-				}()
-				go func() {
-					defer wg.Done()
-					// Send remote stderr to local stderr for CLI mode
-					_, _ = io.Copy(os.Stderr, stderrPipe)
-				}()
-
-				cmdErr = session.Wait() // Wait for the remote command to finish
-				wg.Wait()               // Wait for io.Copy goroutines to finish
-				// Output was handled directly by io.Copy
-			} else {
-				// --- TUI Mode: Channel Output ---
-				outputDone := make(chan struct{}, 2) // Wait for both streamPipe goroutines
-
-				go streamPipe(stdoutPipe, outChan, outputDone, false)
-				go streamPipe(stderrPipe, outChan, outputDone, true)
-
-				cmdErr = session.Wait() // Wait for the remote command to finish
-
-				// Wait for pipe readers to finish *after* command Wait returns
-				<-outputDone
-				<-outputDone
-			}
-
-			if cmdErr != nil {
-				exitCode := -1
-				// Try to extract the exit code from the SSH error
-				if exitErr, ok := cmdErr.(*gossh.ExitError); ok {
-					exitCode = exitErr.ExitStatus()
-				}
-				// Provide a more informative error message including the exit code if available
-				if exitCode != -1 {
-					errChan <- fmt.Errorf("%s exited with status %d: %w", cmdDesc, exitCode, cmdErr)
-				} else {
-					errChan <- fmt.Errorf("%s failed: %w", cmdDesc, cmdErr) // General failure
-				}
-				return // Signal error
-			}
-			// Command succeeded remotely
+			runSSHCommand(*step.Target.HostConfig, remoteCmdString, cmdDesc, cliMode, outChan, errChan)
 		} else {
-			// --- Local Execution ---
 			cmd := exec.Command(step.Command, step.Args...)
 			// cmd.Dir is not set for host commands, run in the default working directory
 			localCmdDesc := fmt.Sprintf("local %s", cmdDesc)
 
-			var cmdErr error
-			if cliMode {
-				// --- CLI Mode: Direct Output ---
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-
-				if err := cmd.Start(); err != nil {
-					errChan <- fmt.Errorf("failed to start %s: %w", localCmdDesc, err)
-					return
-				}
-				// No need for streamPipe goroutines or outputDone channel for direct output
-				cmdErr = cmd.Wait() // Wait for the command to finish
-				// Output was handled directly by the process writing to os.Stdout/Stderr
-			} else {
-				// --- TUI Mode: Channel Output ---
-				stdoutPipe, err := cmd.StdoutPipe()
-				if err != nil {
-					errChan <- fmt.Errorf("failed to get stdout pipe for %s: %w", localCmdDesc, err)
-					return
-				}
-				stderrPipe, err := cmd.StderrPipe()
-				if err != nil {
-					errChan <- fmt.Errorf("failed to get stderr pipe for %s: %w", localCmdDesc, err)
-					return
-				}
-
-				if err := cmd.Start(); err != nil {
-					errChan <- fmt.Errorf("failed to start %s: %w", localCmdDesc, err)
-					return
-				}
-
-				outputDone := make(chan struct{}, 2) // Wait for both streamPipe goroutines
-				go streamPipe(stdoutPipe, outChan, outputDone, false)
-				go streamPipe(stderrPipe, outChan, outputDone, true)
-
-				cmdErr = cmd.Wait() // Wait for the command to finish
-
-				// Wait for pipe readers to finish *after* command Wait returns
-				<-outputDone
-				<-outputDone
-			}
-
-			if cmdErr != nil {
-				exitCode := -1
-				if exitError, ok := cmdErr.(*exec.ExitError); ok {
-					if status, ok := exitError.Sys().(syscall.WaitStatus); ok {
-						exitCode = status.ExitStatus()
-					}
-				}
-				if exitCode != -1 {
-					errChan <- fmt.Errorf("%s exited with status %d: %w", localCmdDesc, exitCode, cmdErr)
-				} else {
-					errChan <- fmt.Errorf("%s failed: %w", localCmdDesc, cmdErr)
-				}
-				return
-			}
+			runLocalCommand(cmd, localCmdDesc, cliMode, outChan, errChan)
 		}
 	}()
 
@@ -262,19 +100,18 @@ func RunHostCommand(step HostCommandStep, cliMode bool) (<-chan OutputLine, <-ch
 // This is used for TUI mode where raw output (including control characters) is needed.
 func streamPipe(pipe io.Reader, outChan chan<- OutputLine, doneChan chan<- struct{}, isError bool) {
 	defer func() { doneChan <- struct{}{} }()
-	buf := make([]byte, 1024) // Read in chunks
+	buf := make([]byte, 1024)
 	for {
 		n, err := pipe.Read(buf)
 		if n > 0 {
-			// Send the raw chunk as a string
 			outChan <- OutputLine{Line: string(buf[:n]), IsError: isError}
 		}
 		if err != nil {
 			if err != io.EOF {
-				// Log or handle read errors if necessary
+				// Log or handle read errors if necessary, this print might be noisy for TUI
 				fmt.Fprintf(os.Stderr, "Pipe read error (%v): %v\n", isError, err)
 			}
-			break // Exit loop on EOF or other errors
+			break
 		}
 	}
 }
@@ -295,55 +132,10 @@ func StreamCommand(step CommandStep, cliMode bool) (<-chan OutputLine, <-chan er
 		cmdDesc := fmt.Sprintf("step '%s' for stack %s", step.Name, step.Stack.Identifier())
 
 		if step.Stack.IsRemote {
-			if sshManager == nil {
-				errChan <- fmt.Errorf("ssh manager not initialized for %s", cmdDesc)
-				return
-			}
 			if step.Stack.HostConfig == nil {
 				errChan <- fmt.Errorf("internal error: HostConfig is nil for remote stack %s", step.Stack.Identifier())
 				return
 			}
-
-			client, err := sshManager.GetClient(*step.Stack.HostConfig)
-			if err != nil {
-				errChan <- fmt.Errorf("failed to get ssh client for %s: %w", cmdDesc, err)
-				return
-			}
-
-			session, err := client.NewSession()
-			if err != nil {
-				errChan <- fmt.Errorf("failed to create ssh session for %s: %w", cmdDesc, err)
-				return
-			}
-			defer session.Close()
-
-			stdoutPipe, err := session.StdoutPipe()
-			if err != nil {
-				errChan <- fmt.Errorf("failed to get ssh stdout pipe for %s: %w", cmdDesc, err)
-				return
-			}
-			stderrPipe, err := session.StderrPipe()
-			if err != nil {
-				errChan <- fmt.Errorf("failed to get ssh stderr pipe for %s: %w", cmdDesc, err)
-				return
-			}
-
-			// Request a PTY for interactive commands like podman compose (enables color)
-			modes := gossh.TerminalModes{
-				gossh.ECHO:          0,     // disable echoing input
-				gossh.TTY_OP_ISPEED: 14400, // input speed = 14.4kbaud
-				gossh.TTY_OP_OSPEED: 14400, // output speed = 14.4kbaud
-			}
-			// Use a common terminal type like xterm-256color
-			if err := session.RequestPty("xterm-256color", 80, 40, modes); err != nil {
-				// Log non-critical error, but continue execution
-				fmt.Fprintf(os.Stderr, "Warning: Failed to request pty for %s (continuing): %v\n", cmdDesc, err)
-				// If PTY is strictly required, return error:
-				// errChan <- fmt.Errorf("failed to request pty for %s: %w", cmdDesc, err)
-				// return
-			}
-
-			// Construct the remote command string (cd /resolved/absolute/root/relative/path && command args...)
 			if step.Stack.AbsoluteRemoteRoot == "" {
 				errChan <- fmt.Errorf("internal error: AbsoluteRemoteRoot is empty for remote stack %s", step.Stack.Identifier())
 				return
@@ -355,122 +147,13 @@ func StreamCommand(step CommandStep, cliMode bool) (<-chan OutputLine, <-chan er
 			}
 			remoteCmdString := strings.Join(remoteCmdParts, " ")
 
-			if err := session.Start(remoteCmdString); err != nil {
-				errChan <- fmt.Errorf("failed to start remote command for %s: %w", cmdDesc, err)
-				return
-			}
-
-			var cmdErr error
-			if cliMode {
-				// --- CLI Mode: Direct Output ---
-				// Use io.Copy to directly pipe remote output to local stdout/stderr
-				var wg sync.WaitGroup
-				wg.Add(2) // Wait for both stdout and stderr copying
-
-				go func() {
-					defer wg.Done()
-					_, _ = io.Copy(os.Stdout, stdoutPipe) // Ignore errors for now
-				}()
-				go func() {
-					defer wg.Done()
-					// Send remote stderr to local stderr for CLI mode
-					_, _ = io.Copy(os.Stderr, stderrPipe)
-				}()
-
-				cmdErr = session.Wait() // Wait for the remote command to finish
-				wg.Wait()               // Wait for io.Copy goroutines to finish
-				// Output was handled directly by io.Copy
-			} else {
-				// --- TUI Mode: Channel Output ---
-				outputDone := make(chan struct{}, 2) // Wait for both streamPipe goroutines
-
-				go streamPipe(stdoutPipe, outChan, outputDone, false)
-				go streamPipe(stderrPipe, outChan, outputDone, true)
-
-				cmdErr = session.Wait() // Wait for the remote command to finish
-
-				// Wait for pipe readers to finish *after* command Wait returns
-				<-outputDone
-				<-outputDone
-			}
-
-			if cmdErr != nil {
-				exitCode := -1
-				// Try to extract the exit code from the SSH error
-				if exitErr, ok := cmdErr.(*gossh.ExitError); ok {
-					exitCode = exitErr.ExitStatus()
-				}
-				// Provide a more informative error message including the exit code if available
-				if exitCode != -1 {
-					errChan <- fmt.Errorf("%s exited with status %d: %w", cmdDesc, exitCode, cmdErr)
-				} else {
-					errChan <- fmt.Errorf("%s failed: %w", cmdDesc, cmdErr) // General failure
-				}
-				return // Signal error
-			}
-			// Command succeeded remotely
+			runSSHCommand(*step.Stack.HostConfig, remoteCmdString, cmdDesc, cliMode, outChan, errChan)
 		} else {
-			// --- Local Execution ---
 			cmd := exec.Command(step.Command, step.Args...)
-			cmd.Dir = step.Stack.Path // Run in the stack's directory
+			cmd.Dir = step.Stack.Path
 			localCmdDesc := fmt.Sprintf("local %s", cmdDesc)
 
-			var cmdErr error
-			if cliMode {
-				// --- CLI Mode: Direct Output ---
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-
-				if err := cmd.Start(); err != nil {
-					errChan <- fmt.Errorf("failed to start %s: %w", localCmdDesc, err)
-					return
-				}
-				// No need for streamPipe goroutines or outputDone channel for direct output
-				cmdErr = cmd.Wait() // Wait for the command to finish
-				// Output was handled directly by the process writing to os.Stdout/Stderr
-			} else {
-				// --- TUI Mode: Channel Output ---
-				stdoutPipe, err := cmd.StdoutPipe()
-				if err != nil {
-					errChan <- fmt.Errorf("failed to get stdout pipe for %s: %w", localCmdDesc, err)
-					return
-				}
-				stderrPipe, err := cmd.StderrPipe()
-				if err != nil {
-					errChan <- fmt.Errorf("failed to get stderr pipe for %s: %w", localCmdDesc, err)
-					return
-				}
-
-				if err := cmd.Start(); err != nil {
-					errChan <- fmt.Errorf("failed to start %s: %w", localCmdDesc, err)
-					return
-				}
-
-				outputDone := make(chan struct{}, 2) // Wait for both streamPipe goroutines
-				go streamPipe(stdoutPipe, outChan, outputDone, false)
-				go streamPipe(stderrPipe, outChan, outputDone, true)
-
-				cmdErr = cmd.Wait() // Wait for the command to finish
-
-				// Wait for pipe readers to finish *after* command Wait returns
-				<-outputDone
-				<-outputDone
-			}
-
-			if cmdErr != nil {
-				exitCode := -1
-				if exitError, ok := cmdErr.(*exec.ExitError); ok {
-					if status, ok := exitError.Sys().(syscall.WaitStatus); ok {
-						exitCode = status.ExitStatus()
-					}
-				}
-				if exitCode != -1 {
-					errChan <- fmt.Errorf("%s exited with status %d: %w", localCmdDesc, exitCode, cmdErr)
-				} else {
-					errChan <- fmt.Errorf("%s failed: %w", localCmdDesc, cmdErr)
-				}
-				return
-			}
+			runLocalCommand(cmd, localCmdDesc, cliMode, outChan, errChan)
 		}
 	}()
 
@@ -594,49 +277,9 @@ func GetStackStatus(stack discovery.Stack) StackRuntimeInfo {
 	var stderrStr string
 
 	if stack.IsRemote {
-		if sshManager == nil {
-			info.OverallStatus = StatusError
-			info.Error = fmt.Errorf("ssh manager not initialized for %s", cmdDesc)
-			return info
-		}
-		if stack.HostConfig == nil {
-			info.OverallStatus = StatusError
-			info.Error = fmt.Errorf("internal error: HostConfig is nil for %s", cmdDesc)
-			return info
-		}
-
-		client, clientErr := sshManager.GetClient(*stack.HostConfig)
-		if clientErr != nil {
-			info.OverallStatus = StatusError
-			info.Error = fmt.Errorf("failed to get ssh client for %s: %w", cmdDesc, clientErr)
-			return info
-		}
-
-		session, sessionErr := client.NewSession()
-		if sessionErr != nil {
-			info.OverallStatus = StatusError
-			info.Error = fmt.Errorf("failed to create ssh session for %s: %w", cmdDesc, sessionErr)
-			return info
-		}
-
-		if stack.AbsoluteRemoteRoot == "" {
-			info.OverallStatus = StatusError
-			info.Error = fmt.Errorf("internal error: AbsoluteRemoteRoot is empty for remote stack %s", stack.Identifier())
-			return info
-		}
-		remoteStackPath := filepath.Join(stack.AbsoluteRemoteRoot, stack.Path)
-		remoteCmdParts := []string{"cd", util.QuoteArgForShell(remoteStackPath), "&&", "podman"}
-		for _, arg := range psArgs {
-			remoteCmdParts = append(remoteCmdParts, util.QuoteArgForShell(arg))
-		}
-		remoteCmdString := strings.Join(remoteCmdParts, " ")
-
-		// Use CombinedOutput for status check as it's typically short
-		output, err = session.CombinedOutput(remoteCmdString)
-		// CombinedOutput returns stdout and stderr combined. Error checking below handles failures.
-
+		output, err = runSSHStatusCheck(stack, psArgs, cmdDesc)
+		// runSSHStatusCheck returns combined output and error
 	} else {
-		// --- Local Status Check ---
 		cmd := exec.Command("podman", psArgs...)
 		cmd.Dir = stack.Path
 		var stdoutBuf, stderrBuf bytes.Buffer
@@ -648,7 +291,6 @@ func GetStackStatus(stack discovery.Stack) StackRuntimeInfo {
 		stderrStr = stderrBuf.String()
 	}
 
-	// Check for errors after execution
 	if err != nil {
 		// Check common errors indicating the stack is simply down or doesn't exist
 		errMsgLower := strings.ToLower(err.Error())
@@ -659,21 +301,20 @@ func GetStackStatus(stack discovery.Stack) StackRuntimeInfo {
 			stderrLower = strings.ToLower(string(output))
 		}
 
-		if strings.Contains(errMsgLower, "exit status") || // Generic exit error
-			strings.Contains(stderrLower, "no containers found") || // Podman compose message
+		if strings.Contains(errMsgLower, "exit status") ||
+			strings.Contains(stderrLower, "no containers found") ||
 			strings.Contains(stderrLower, "no such file or directory") { // If compose file is missing
 			info.OverallStatus = StatusDown
 			return info // Not a failure, just down.
 		}
 
-		// Otherwise, it's a real error
 		info.OverallStatus = StatusError
 		errMsg := fmt.Sprintf("failed to run %s", cmdDesc)
 		// Append stderr from local execution if available and provides context
 		if !stack.IsRemote && stderrStr != "" {
 			errMsg = fmt.Sprintf("%s: %s", errMsg, strings.TrimSpace(stderrStr))
 		}
-		info.Error = fmt.Errorf("%s: %w", errMsg, err) // Wrap original error
+		info.Error = fmt.Errorf("%s: %w", errMsg, err)
 		return info
 	}
 
@@ -699,19 +340,17 @@ func GetStackStatus(stack discovery.Stack) StackRuntimeInfo {
 			if firstUnmarshalError == nil {
 				firstUnmarshalError = fmt.Errorf("failed to decode container status JSON line: %w\nLine: %s", errUnmarshal, string(lineBytes))
 			}
-			continue // Skip lines that fail to parse
+			continue
 		}
 		containers = append(containers, container)
 	}
 
-	// Check for scanner errors
 	if errScan := scanner.Err(); errScan != nil {
 		if firstUnmarshalError == nil { // Prioritize unmarshal errors over scan errors
 			firstUnmarshalError = fmt.Errorf("error scanning command output: %w", errScan)
 		}
 	}
 
-	// If any line failed to unmarshal, report the error
 	if firstUnmarshalError != nil {
 		// Check if the error might be the "no containers found" case by examining the raw output
 		outputLower := strings.ToLower(string(output))
@@ -719,9 +358,8 @@ func GetStackStatus(stack discovery.Stack) StackRuntimeInfo {
 			info.OverallStatus = StatusDown
 			return info
 		}
-		// Otherwise, report the parsing error
 		info.OverallStatus = StatusError
-		info.Error = firstUnmarshalError // Use the stored first error
+		info.Error = firstUnmarshalError
 		return info
 	}
 

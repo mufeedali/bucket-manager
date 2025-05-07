@@ -15,10 +15,9 @@ import (
 // --- Form Creation ---
 
 func createAddForm() []textinput.Model {
-	inputs := make([]textinput.Model, 7) // Name, Hostname, User, Port, RemoteRoot, KeyPath, Password
+	inputs := make([]textinput.Model, 7)
 	var t textinput.Model
 
-	// 0: Name
 	t = textinput.New()
 	t.Placeholder = "Unique Name (e.g., server1)"
 	t.Focus() // Initial focus
@@ -26,21 +25,18 @@ func createAddForm() []textinput.Model {
 	t.Width = 40
 	inputs[0] = t
 
-	// 1: Hostname
 	t = textinput.New()
 	t.Placeholder = "Hostname or IP Address"
 	t.CharLimit = 100
 	t.Width = 40
 	inputs[1] = t
 
-	// 2: User
 	t = textinput.New()
 	t.Placeholder = "SSH Username"
 	t.CharLimit = 50
 	t.Width = 40
 	inputs[2] = t
 
-	// 3: Port
 	t = textinput.New()
 	t.Placeholder = "Port (default 22)"
 	t.CharLimit = 5
@@ -57,21 +53,18 @@ func createAddForm() []textinput.Model {
 	}
 	inputs[3] = t
 
-	// 4: Remote Root
 	t = textinput.New()
 	t.Placeholder = "Remote Root Path (optional, defaults: ~/bucket or ~/compose-bucket)"
 	t.CharLimit = 200
 	t.Width = 60
 	inputs[4] = t
 
-	// 5: Key Path
 	t = textinput.New()
 	t.Placeholder = "Path to Private Key (e.g., ~/.ssh/id_rsa)"
 	t.CharLimit = 200
 	t.Width = 60
 	inputs[5] = t
 
-	// 6: Password
 	t = textinput.New()
 	t.Placeholder = "Password (stored insecurely!)"
 	t.EchoMode = textinput.EchoPassword
@@ -93,7 +86,6 @@ func createEditForm(host config.SSHHost) ([]textinput.Model, int, bool) {
 		initialAuthMethod = authMethodPassword
 	}
 
-	// 0: Name
 	t = textinput.New()
 	t.Placeholder = "Unique Name"
 	t.SetValue(host.Name)
@@ -102,7 +94,6 @@ func createEditForm(host config.SSHHost) ([]textinput.Model, int, bool) {
 	t.Width = 40
 	inputs[0] = t
 
-	// 1: Hostname
 	t = textinput.New()
 	t.Placeholder = "Hostname or IP Address"
 	t.SetValue(host.Hostname)
@@ -110,7 +101,6 @@ func createEditForm(host config.SSHHost) ([]textinput.Model, int, bool) {
 	t.Width = 40
 	inputs[1] = t
 
-	// 2: User
 	t = textinput.New()
 	t.Placeholder = "SSH Username"
 	t.SetValue(host.User)
@@ -118,7 +108,6 @@ func createEditForm(host config.SSHHost) ([]textinput.Model, int, bool) {
 	t.Width = 40
 	inputs[2] = t
 
-	// 3: Port
 	t = textinput.New()
 	t.Placeholder = "Port (default 22)"
 	portStr := ""
@@ -140,7 +129,6 @@ func createEditForm(host config.SSHHost) ([]textinput.Model, int, bool) {
 	}
 	inputs[3] = t
 
-	// 4: Remote Root
 	t = textinput.New()
 	t.Placeholder = "Remote Root Path (leave blank for default)"
 	t.SetValue(host.RemoteRoot)
@@ -148,7 +136,6 @@ func createEditForm(host config.SSHHost) ([]textinput.Model, int, bool) {
 	t.Width = 60
 	inputs[4] = t
 
-	// 5: Key Path
 	t = textinput.New()
 	t.Placeholder = "Path to Private Key"
 	t.SetValue(host.KeyPath)
@@ -156,7 +143,6 @@ func createEditForm(host config.SSHHost) ([]textinput.Model, int, bool) {
 	t.Width = 60
 	inputs[5] = t
 
-	// 6: Password
 	t = textinput.New()
 	t.Placeholder = "Password (leave blank to keep current)" // Don't show existing password
 	t.EchoMode = textinput.EchoPassword
@@ -175,7 +161,6 @@ func createImportDetailsForm(pHost config.PotentialHost) ([]textinput.Model, int
 	var t textinput.Model
 	initialAuthMethod := authMethodAgent // Default if no key found
 
-	// 4: Remote Root
 	t = textinput.New()
 	t.Placeholder = "Remote Root Path (optional, defaults: ~/bucket or ~/compose-bucket)"
 	t.Focus() // Initial focus for this form
@@ -183,7 +168,6 @@ func createImportDetailsForm(pHost config.PotentialHost) ([]textinput.Model, int
 	t.Width = 70
 	inputs[4] = t
 
-	// 5: Key Path
 	t = textinput.New()
 	t.Placeholder = "Path to Private Key"
 	t.CharLimit = 200
@@ -194,7 +178,6 @@ func createImportDetailsForm(pHost config.PotentialHost) ([]textinput.Model, int
 	}
 	inputs[5] = t
 
-	// 6: Password
 	t = textinput.New()
 	t.Placeholder = "Password (stored insecurely!)"
 	t.EchoMode = textinput.EchoPassword
@@ -232,7 +215,7 @@ func (m *model) buildHostFromForm() (config.SSHHost, error) {
 	if host.User == "" {
 		return host, fmt.Errorf("user is required")
 	}
-	host.RemoteRoot = strings.TrimSpace(m.formInputs[4].Value()) // Optional
+	host.RemoteRoot = strings.TrimSpace(m.formInputs[4].Value())
 
 	// Validate and parse Port
 	portStr := strings.TrimSpace(m.formInputs[3].Value())
@@ -259,7 +242,7 @@ func (m *model) buildHostFromForm() (config.SSHHost, error) {
 		}
 		host.Password = "" // Ensure password is empty
 	case authMethodPassword:
-		host.Password = m.formInputs[6].Value() // Password input
+		host.Password = m.formInputs[6].Value()
 		if host.Password == "" {
 			return host, fmt.Errorf("password is required for Password authentication")
 		}
@@ -349,7 +332,7 @@ func (m *model) buildHostFromEditForm() (config.SSHHost, error) {
 				return editedHost, fmt.Errorf("key path is required for Key File authentication")
 			}
 		} else {
-			editedHost.KeyPath = keyPathInput // Use the new input
+			editedHost.KeyPath = keyPathInput
 		}
 		editedHost.Password = "" // Clear password if key is set/kept
 	case authMethodPassword:
@@ -362,7 +345,7 @@ func (m *model) buildHostFromEditForm() (config.SSHHost, error) {
 				return editedHost, fmt.Errorf("password is required for Password authentication (leave blank only to keep existing)")
 			}
 		} else {
-			editedHost.Password = passwordInput // Use the new input
+			editedHost.Password = passwordInput
 		}
 		editedHost.KeyPath = "" // Clear key path if password is set/kept
 	case authMethodAgent:

@@ -70,9 +70,7 @@ var configGetLocalRootCmd = &cobra.Command{
 			if resolveErr == nil {
 				fmt.Printf("Resolved path:         %s\n", resolvedPath)
 			} else {
-				// This is more of a warning for the user, keep as Printf for now, or enhance logger later
-				// logger.Warnf("Could not resolve configured path: %v", resolveErr)
-				fmt.Printf("Warning: Could not resolve configured path: %v\n", resolveErr) // Keep direct print for now
+				fmt.Printf("Warning: Could not resolve configured path: %v\n", resolveErr)
 			}
 		} else {
 			fmt.Println("Local root not explicitly configured.")
@@ -100,16 +98,11 @@ var configGetLocalRootCmd = &cobra.Command{
 
 		} else if strings.Contains(activeErr.Error(), "could not find") {
 			if cfg.LocalRoot != "" {
-				// Keep direct print for now
 				fmt.Printf("Warning: Configured path '%s' not found, and no default path exists.\n", cfg.LocalRoot)
-				// logger.Warnf("Configured path '%s' not found, and no default path exists.", cfg.LocalRoot)
 			} else {
-				// Keep direct print for now
 				fmt.Println("Warning: Neither default path exists.")
-				// logger.Warn("Neither default path exists.")
 			}
 		} else {
-			// Report other errors encountered during discovery check - use logger
 			logger.Errorf("Error determining effective path: %v", activeErr)
 		}
 	},

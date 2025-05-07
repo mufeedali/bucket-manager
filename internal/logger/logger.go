@@ -8,9 +8,6 @@ import (
 	"path/filepath"
 )
 
-// TODO: Allow configuration of log level (e.g., via env var or config file)
-// TODO: Consider log rotation
-
 var defaultLogger *slog.Logger
 
 // getLogFilePath determines the path for the application log file based on XDG spec.
@@ -38,7 +35,7 @@ func setupLogging(logToFile bool, logToStderr bool) error {
 	}
 
 	var writers []io.Writer
-	var logFileHandle *os.File // Keep track of the file handle if opened
+	var logFileHandle *os.File
 
 	if logToFile {
 		logFilePath, err := getLogFilePath()
@@ -48,17 +45,17 @@ func setupLogging(logToFile bool, logToStderr bool) error {
 			// Continue without file logging if path fails
 		} else {
 			logDir := filepath.Dir(logFilePath)
-			// Create directory with appropriate permissions (0750: user rwx, group rx, others ---)
+			// Create log directory
 			if err := os.MkdirAll(logDir, 0750); err != nil {
 				fmt.Fprintf(os.Stderr, "Error creating log directory %s: %v. File logging disabled.\n", logDir, err)
 			} else {
-				// Open file for writing, truncating if it exists (0640: user rw, group r, others ---)
+				// Open log file
 				file, err := os.OpenFile(logFilePath, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0640)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error opening log file %s: %v. File logging disabled.\n", logFilePath, err)
 				} else {
 					writers = append(writers, file)
-					logFileHandle = file // Store handle for potential future closure (though usually handled by OS on exit)
+					logFileHandle = file // For a CLI tool, letting the OS close it on exit is generally acceptable.
 				}
 			}
 		}
@@ -70,7 +67,6 @@ func setupLogging(logToFile bool, logToStderr bool) error {
 
 	var finalWriter io.Writer
 	if len(writers) == 0 {
-		// Fallback if all writers failed to initialize (should be rare)
 		fmt.Fprintln(os.Stderr, "Error: All log writers failed to initialize. Logging to stderr as fallback.")
 		finalWriter = os.Stderr
 	} else if len(writers) == 1 {
@@ -79,10 +75,9 @@ func setupLogging(logToFile bool, logToStderr bool) error {
 		finalWriter = io.MultiWriter(writers...)
 	}
 
-	// Configure the default logger instance
 	// Using JSON handler for structured logging consistency.
 	opts := &slog.HandlerOptions{
-		Level: slog.LevelInfo, // Default level
+		Level: slog.LevelInfo,
 		// AddSource: true,           // Uncomment to add source file/line to logs
 	}
 	handler := slog.NewJSONHandler(finalWriter, opts)
@@ -93,32 +88,27 @@ func setupLogging(logToFile bool, logToStderr bool) error {
 	// For a CLI tool, letting the OS close it on exit is generally acceptable.
 	_ = logFileHandle // Avoid unused variable error if file logging is disabled
 
-	return nil // Indicate success
+	return nil
 }
 
 // InitLogger initializes the logger based on the execution mode (TUI or CLI).
 // It MUST be called once at the beginning of the application.
 func InitLogger(isTUI bool) {
-	logToFile := true     // Always attempt to log to file
-	logToStderr := !isTUI // Log to stderr only if NOT TUI
+	logToFile := true
+	logToStderr := !isTUI
 
 	err := setupLogging(logToFile, logToStderr)
 	if err != nil {
-		// If setup fails, fallback to basic stderr logging to ensure errors are visible
 		fmt.Fprintf(os.Stderr, "Logger initialization failed: %v. Falling back to basic stderr logging.\n", err)
 		handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
 		defaultLogger = slog.New(handler)
 	} else {
-		// Log the path being used if file logging was successfully set up
 		if logToFile {
 			logFilePath, pathErr := getLogFilePath()
 			if pathErr == nil {
-				// Use the logger itself to report where it's logging (if stderr is enabled)
-				// Or print directly to stderr otherwise
 				if logToStderr {
 					Info("Logging configured.", "file", logFilePath, "stderr", logToStderr)
 				} else {
-					// If only logging to file, print a startup message to stderr so user knows where logs are
 					fmt.Fprintf(os.Stderr, "Logging to file: %s\n", logFilePath)
 				}
 			}
@@ -131,9 +121,8 @@ func InitLogger(isTUI bool) {
 // to use specialized loggers. Should be used *after* InitLogger if needed.
 func SetLogger(l *slog.Logger) {
 	if defaultLogger == nil {
-		// Prevent panic if SetLogger is called before InitLogger
 		fmt.Fprintln(os.Stderr, "Warning: SetLogger called before InitLogger. Initializing with defaults.")
-		InitLogger(false) // Initialize with CLI defaults
+		InitLogger(false)
 	}
 	defaultLogger = l
 }

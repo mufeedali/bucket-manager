@@ -31,8 +31,7 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 	m.mu.Lock()
 	client, found := m.clients[hostConfig.Name]
 	if found {
-		// Basic check: Send keepalive to see if connection is still valid
-		// This isn't foolproof but catches many common disconnection scenarios.
+		// Send keepalive to check if cached client is still valid (not foolproof).
 		_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
 		if err == nil {
 			m.mu.Unlock()

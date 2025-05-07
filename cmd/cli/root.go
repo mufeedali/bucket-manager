@@ -111,9 +111,9 @@ func discoverLocalStacksForCompletion() ([]discovery.Stack, error) {
 	localRootDir, err := discovery.GetComposeRootDirectory()
 	if err != nil {
 		if strings.Contains(err.Error(), "could not find") {
-			return nil, nil // Ignore "not found" for completion purposes
+			return nil, nil
 		}
-		return nil, err // Return other errors
+		return nil, err
 	}
 	return discovery.FindLocalStacks(localRootDir)
 }
@@ -178,24 +178,22 @@ func discoverAllRemoteStacksForCompletion() ([]discovery.Stack, []error) {
 		}(hostConfig)
 	}
 
-	// Goroutine to close channels once all discovery goroutines are done
 	go func() {
 		wg.Wait()
 		close(stackChan)
 		close(errorChan)
 	}()
 
-	// Collect results
 	var collectWg sync.WaitGroup
 	collectWg.Add(2)
 
-	go func() { // Collect stacks
+	go func() {
 		defer collectWg.Done()
 		for s := range stackChan {
 			remoteStacks = append(remoteStacks, s)
 		}
 	}()
-	go func() { // Collect errors
+	go func() {
 		defer collectWg.Done()
 		for e := range errorChan {
 			discoveryErrors = append(discoveryErrors, e)
@@ -256,19 +254,18 @@ func stackCompletionFunc(cmd *cobra.Command, args []string, toComplete string) (
 			for suggestion := range suggestionMap {
 				suggestions = append(suggestions, suggestion)
 			}
-			// sort.Strings(suggestions) // Optional: Sort suggestions alphabetically
 			return suggestions, cobra.ShellCompDirectiveNoFileComp
 		}
 
 		// No local matches found, proceed to discover all remotes
 		var remoteStacks []discovery.Stack
 		remoteStacks, discoveryErrors = discoverAllRemoteStacksForCompletion()
-		stacksToSearch = append(stacksToSearch, remoteStacks...) // Add remotes to the search list
+		stacksToSearch = append(stacksToSearch, remoteStacks...)
 		// We collected remote discovery errors, but won't show them during completion
-		_ = discoveryErrors // Explicitly ignore collected errors for completion
+		_ = discoveryErrors
 	}
 
-	// --- Generate Suggestions from discovered stacks ---
+	// Generate Suggestions from discovered stacks
 	for _, s := range stacksToSearch {
 		identifier := s.Identifier() // e.g., "local:stack" or "remote:stack"
 		name := s.Name               // e.g., "stack"
@@ -281,7 +278,6 @@ func stackCompletionFunc(cmd *cobra.Command, args []string, toComplete string) (
 		// If completing just a name (e.g., "st") or a server (e.g., "remote:")
 		if !hasColon {
 			if strings.HasPrefix(name, targetStack) {
-				// Suggest the plain name if it matches
 				suggestionMap[name] = struct{}{}
 			}
 			// Also suggest the full identifier if the server part matches
@@ -300,7 +296,6 @@ func stackCompletionFunc(cmd *cobra.Command, args []string, toComplete string) (
 	for suggestion := range suggestionMap {
 		suggestions = append(suggestions, suggestion)
 	}
-	// sort.Strings(suggestions) // Optional: Sort suggestions alphabetically
 
 	return suggestions, cobra.ShellCompDirectiveNoFileComp
 }
@@ -369,7 +364,7 @@ func init() {
 	rootCmd.AddCommand(refreshCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(pullCmd)
-	rootCmd.AddCommand(pruneCmd) // Add prune command
+	rootCmd.AddCommand(pruneCmd)
 }
 
 var listCmd = &cobra.Command{
@@ -382,9 +377,8 @@ var listCmd = &cobra.Command{
 		var collectedErrors []error
 		var stacksFound bool
 		var wg sync.WaitGroup
-		wg.Add(1) // Only wait for the error collection goroutine
+		wg.Add(1)
 
-		// Goroutine to collect errors and print them immediately
 		go func() {
 			defer wg.Done()
 			for err := range errorChan {
@@ -435,7 +429,6 @@ func discoverTargetStacks(identifier string, s *spinner.Spinner) ([]discovery.St
 	targetStackName := ""
 	targetServerName := "" // "local", specific remote name, or "" for ambiguous/all
 
-	// 1. Parse Identifier
 	if identifier != "" {
 		if strings.HasSuffix(identifier, ":") { // e.g., "server1:"
 			targetServerName = strings.TrimSuffix(identifier, ":")
@@ -456,17 +449,14 @@ func discoverTargetStacks(identifier string, s *spinner.Spinner) ([]discovery.St
 	}
 	// If identifier is "", scanAll case: targetServerName and targetStackName remain ""
 
-	// 2. Load Config (needed for any remote operation)
 	cfg, configErr := config.LoadConfig()
 	// Defer returning config error until we know we need remotes
 
-	// 3. Perform Discovery based on parsed identifier
 	scanAll := identifier == ""
 	discoverLocal := targetServerName == "local" || targetServerName == ""
 	discoverSpecificRemote := targetServerName != "local" && targetServerName != ""
 	discoverAllRemotes := targetServerName == "" // Only if ambiguous and not found locally
 
-	// --- Local Discovery ---
 	if discoverLocal {
 		localRootDir, err := discovery.GetComposeRootDirectory()
 		if err == nil {
@@ -477,14 +467,12 @@ func discoverTargetStacks(identifier string, s *spinner.Spinner) ([]discovery.St
 				stacksToCheck = append(stacksToCheck, localStacks...)
 			}
 		} else if !strings.Contains(err.Error(), "could not find") {
-			// Report errors other than "not found"
 			collectedErrors = append(collectedErrors, fmt.Errorf("local root check failed: %w", err))
 		}
 	}
 
-	// --- Specific Remote Discovery ---
 	if discoverSpecificRemote {
-		if configErr != nil { // Now we definitely need the config
+		if configErr != nil {
 			return nil, []error{fmt.Errorf("error loading config needed for remote discovery: %w", configErr)}
 		}
 		var targetHost *config.SSHHost
@@ -506,14 +494,13 @@ func discoverTargetStacks(identifier string, s *spinner.Spinner) ([]discovery.St
 			if err != nil {
 				collectedErrors = append(collectedErrors, fmt.Errorf("remote discovery failed for %s: %w", targetHost.Name, err))
 			} else {
-				// Filter results based on whether we need all stacks or a specific one
-				if targetStackName == "" { // "remote:" case
+				if targetStackName == "" {
 					stacksToCheck = append(stacksToCheck, remoteStacks...)
-				} else { // "remote:stack" case
+				} else {
 					for _, rs := range remoteStacks {
 						if rs.Name == targetStackName {
 							stacksToCheck = append(stacksToCheck, rs)
-							break // Found the specific stack on this remote
+							break
 						}
 					}
 				}
@@ -521,9 +508,7 @@ func discoverTargetStacks(identifier string, s *spinner.Spinner) ([]discovery.St
 		}
 	}
 
-	// --- Ambiguous Case: Discover All Remotes (if needed) ---
 	if discoverAllRemotes {
-		// Check if the target stack was already found locally
 		foundLocally := false
 		if targetStackName != "" { // Only relevant if looking for a specific stack
 			for _, s := range stacksToCheck {
@@ -534,12 +519,11 @@ func discoverTargetStacks(identifier string, s *spinner.Spinner) ([]discovery.St
 			}
 		}
 
-		// If looking for a specific stack AND it wasn't found locally, search remotes
 		if targetStackName != "" && !foundLocally {
-			if configErr != nil { // Check config error before remote scan
+			if configErr != nil {
 				collectedErrors = append(collectedErrors, fmt.Errorf("stack '%s' not found locally and remote discovery skipped due to config error: %w", targetStackName, configErr))
 			} else if len(cfg.SSHHosts) > 0 {
-				if s != nil { // Update spinner
+				if s != nil {
 					originalSuffix := s.Suffix
 					s.Suffix = fmt.Sprintf(" Discovering %s on remotes...", identifierColor.Sprint(targetStackName))
 					defer func() { s.Suffix = originalSuffix }()
@@ -551,48 +535,42 @@ func discoverTargetStacks(identifier string, s *spinner.Spinner) ([]discovery.St
 				remoteWg.Add(len(cfg.SSHHosts))
 
 				for i := range cfg.SSHHosts {
-					hostConfig := cfg.SSHHosts[i] // Capture loop variable
+					hostConfig := cfg.SSHHosts[i]
 					go func(hc config.SSHHost) {
 						defer remoteWg.Done()
 						remoteStacks, err := discovery.FindRemoteStacks(&hc)
 						if err != nil {
 							remoteErrorChan <- fmt.Errorf("remote discovery failed for %s: %w", hc.Name, err)
 						} else {
-							// Add remote stack only if it matches the target name
 							for _, rs := range remoteStacks {
 								if rs.Name == targetStackName {
 									remoteStackChan <- rs
-									break // Found the one we need on this remote
+									break
 								}
 							}
 						}
 					}(hostConfig)
 				}
 
-				// Closer goroutine
 				go func() {
 					remoteWg.Wait()
 					close(remoteStackChan)
 					close(remoteErrorChan)
 				}()
 
-				// Collect remote stacks matching the name
 				for rs := range remoteStackChan {
 					stacksToCheck = append(stacksToCheck, rs)
 				}
-				// Collect remote discovery errors
 				for err := range remoteErrorChan {
 					collectedErrors = append(collectedErrors, err)
 				}
 			}
-		} else if scanAll { // If scanning all, use the main FindStacks function
-			// This block replaces the original `if scanAll` block logic
-			if s != nil { // Update spinner
+		} else if scanAll {
+			if s != nil {
 				originalSuffix := s.Suffix
 				s.Suffix = " Discovering all stacks..."
 				defer func() { s.Suffix = originalSuffix }()
 			}
-			// Clear potentially added local stacks if we are rescanning all
 			stacksToCheck = nil
 			stackChan, errorChan, _ := discovery.FindStacks()
 			var wg sync.WaitGroup
@@ -613,12 +591,10 @@ func discoverTargetStacks(identifier string, s *spinner.Spinner) ([]discovery.St
 		}
 	}
 
-	// --- Final Filtering & Ambiguity Resolution ---
 	finalStacks := []discovery.Stack{}
 	if scanAll {
-		finalStacks = stacksToCheck // No filtering needed for scan all
+		finalStacks = stacksToCheck
 	} else {
-		// Filter based on explicit parts of the identifier
 		for _, s := range stacksToCheck {
 			nameMatch := (targetStackName == "" || s.Name == targetStackName)
 			serverMatch := (targetServerName == "" || s.ServerName == targetServerName)
@@ -628,26 +604,18 @@ func discoverTargetStacks(identifier string, s *spinner.Spinner) ([]discovery.St
 			}
 		}
 
-		// If the identifier was ambiguous ("stack") and multiple matches remain, resolve ambiguity
 		if targetServerName == "" && targetStackName != "" && len(finalStacks) > 1 {
-			resolvedStack, resolveErr := findStackByIdentifier(finalStacks, identifier) // Use original identifier
+			resolvedStack, resolveErr := findStackByIdentifier(finalStacks, identifier)
 			if resolveErr == nil {
-				// If resolved successfully (e.g. preferred local), return only that one
 				finalStacks = []discovery.Stack{resolvedStack}
 			} else {
-				// If ambiguous and couldn't resolve, return the ambiguity error
-				// Combine with any previous discovery errors
 				return nil, append(collectedErrors, resolveErr)
 			}
 		} else if len(finalStacks) == 0 && len(collectedErrors) == 0 {
-			// If filtering resulted in no stacks and there were no prior discovery errors,
-			// return a specific "not found" error based on the original identifier.
-			// Use findStackByIdentifier to generate the appropriate error message.
-			_, notFoundErr := findStackByIdentifier(stacksToCheck, identifier) // Check against original discovered set
+			_, notFoundErr := findStackByIdentifier(stacksToCheck, identifier)
 			if notFoundErr != nil {
-				return nil, []error{notFoundErr} // Return the specific not found/ambiguous error
+				return nil, []error{notFoundErr}
 			}
-			// If findStackByIdentifier somehow doesn't error, return generic not found
 			return nil, []error{fmt.Errorf("no stacks found matching identifier '%s'", identifier)}
 		}
 	}
@@ -664,29 +632,22 @@ func runStackAction(action string, args []string) {
 
 	statusColor.Printf("Locating stack '%s'...\n", stackIdentifier)
 
-	// Use discoverTargetStacks which handles finding relevant stacks based on the identifier
-	// Pass nil for spinner as this is a non-interactive phase
 	stacksToCheck, collectedErrors := discoverTargetStacks(stackIdentifier, nil)
 
-	// Handle Discovery Errors first
 	if len(collectedErrors) > 0 {
 		errorColor.Fprintln(os.Stderr, "\nErrors during stack discovery:")
 		for _, err := range collectedErrors {
 			errorColor.Fprintf(os.Stderr, "- %v\n", err)
 		}
-		// Exit even if some stacks were found, as the discovery wasn't fully successful
 		os.Exit(1)
 	}
 
-	// Now, try to find the specific stack from the discovered ones
 	targetStack, err := findStackByIdentifier(stacksToCheck, stackIdentifier)
 	if err != nil {
-		// This handles "not found" or "ambiguous" errors based on the discovered stacks
 		errorColor.Fprintf(os.Stderr, "\nError: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Proceed with the action on the uniquely identified target stack
 	statusColor.Printf("Executing '%s' action for stack: %s (%s)\n", action, targetStack.Name, identifierColor.Sprint(targetStack.ServerName))
 
 	var sequence []runner.CommandStep
@@ -770,7 +731,6 @@ Otherwise, shows status for all discovered stacks.`,
 	ValidArgsFunction: stackCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
 		var collectedErrors []error
-		// var specificStackIdentifier string // Not needed directly, use discoveryIdentifier
 		scanAll := len(args) == 0
 
 		s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
@@ -787,39 +747,31 @@ Otherwise, shows status for all discovered stacks.`,
 		}
 		s.Start()
 
-		// Use the refactored discoverTargetStacks with the correctly determined identifier
 		stacksToProcess, collectedErrors := discoverTargetStacks(discoveryIdentifier, s)
 		s.Stop()
 
-		// Handle Discovery Errors
 		if len(collectedErrors) > 0 {
 			logger.Error("\nErrors during stack discovery:")
 			for _, err := range collectedErrors {
 				logger.Errorf("- %v", err)
 			}
-			// Exit if discovery failed completely, otherwise continue with found stacks
 			if len(stacksToProcess) == 0 {
 				os.Exit(1)
 			}
 			errorColor.Fprintln(os.Stderr, "Continuing with successfully discovered stacks...")
 		}
 
-		// If a specific identifier was given but resulted in ambiguity or "not found"
-		// after discovery, findStackByIdentifier (called within discoverTargetStacks)
-		// would have returned an error, handled above.
-		// If discoverTargetStacks returns stacks, they are the ones to process.
+		// Ambiguity/not found errors for specific identifiers are handled within discoverTargetStacks
 
 		if len(stacksToProcess) == 0 {
 			if scanAll {
 				fmt.Println("\nNo Podman Compose stacks found locally or on configured remote hosts.")
 			}
-			// Exit if no stacks to process AND no prior discovery errors occurred
 			if len(collectedErrors) == 0 {
 				os.Exit(1)
 			}
 		}
 
-		// --- Perform Status Checks on the final list of stacks ---
 		if len(stacksToProcess) > 0 {
 			statusChan := make(chan runner.StackRuntimeInfo, len(stacksToProcess))
 			var statusWg sync.WaitGroup
@@ -836,15 +788,13 @@ Otherwise, shows status for all discovered stacks.`,
 				}(stack) // Pass stack by value
 			}
 
-			// Closer goroutine
 			go func() {
 				statusWg.Wait()
 				close(statusChan)
 			}()
 
-			// Process status results as they arrive
 			for statusInfo := range statusChan {
-				s.Stop() // Stop spinner briefly for printing
+				s.Stop()
 
 				fmt.Printf("\nStack: %s (%s) ", statusInfo.Stack.Name, identifierColor.Sprint(statusInfo.Stack.ServerName))
 				switch statusInfo.OverallStatus {
@@ -856,7 +806,6 @@ Otherwise, shows status for all discovered stacks.`,
 					statusPartialColor.Printf("[%s]\n", statusInfo.OverallStatus)
 				case runner.StatusError:
 					statusErrorColor.Printf("[%s]\n", statusInfo.OverallStatus)
-					// Add error to collectedErrors for final summary
 					err := fmt.Errorf("status check for %s failed: %w", statusInfo.Stack.Identifier(), statusInfo.Error)
 					collectedErrors = append(collectedErrors, err)
 					if statusInfo.Error != nil {
@@ -864,18 +813,15 @@ Otherwise, shows status for all discovered stacks.`,
 					} else {
 						logger.Error("  Unknown error checking status.")
 					}
-				default: // Should not happen, but handle defensively
+				default:
 					fmt.Printf("[%s]\n", statusInfo.OverallStatus)
 				}
 
-				// Print container details if stack is not fully down
 				if statusInfo.OverallStatus != runner.StatusDown && len(statusInfo.Containers) > 0 {
 					fmt.Println("  Containers:")
-					// TODO: Consider using text/tabwriter for better alignment if needed
 					fmt.Printf("    %-25s %-35s %s\n", "SERVICE", "CONTAINER NAME", "STATUS")
 					fmt.Printf("    %-25s %-35s %s\n", strings.Repeat("-", 25), strings.Repeat("-", 35), strings.Repeat("-", 6))
 					for _, c := range statusInfo.Containers {
-						// Simplified status check
 						isUp := strings.Contains(strings.ToLower(c.Status), "running") ||
 							strings.Contains(strings.ToLower(c.Status), "healthy") ||
 							strings.HasPrefix(c.Status, "Up")
@@ -887,15 +833,12 @@ Otherwise, shows status for all discovered stacks.`,
 						fmt.Printf("    %-25s %-35s %s\n", c.Service, c.Name, statusPrinter.Sprint(c.Status))
 					}
 				}
-				s.Restart() // Restart spinner for subsequent checks
+				s.Restart()
 			}
-			s.Stop() // Final stop
+			s.Stop()
 		}
 
-		// Final error check
 		if len(collectedErrors) > 0 {
-			// Errors were already printed during discovery or status check phase
-			// Just exit with non-zero status
 			os.Exit(1)
 		}
 	},
@@ -913,38 +856,24 @@ func runSequence(stack discovery.Stack, sequence []runner.CommandStep) error {
 		var wg sync.WaitGroup
 
 		if !step.Stack.IsRemote {
-			// --- Local Execution ---
-			// Output is connected directly in runner.go.
-			// We only need to wait for the command to finish via errChan.
 			stepErr = <-errChan
-			// Print a newline after direct output finishes.
 			fmt.Println()
 		} else {
-			// --- Remote Execution ---
-			// Process output via the outChan as before.
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				for outputLine := range outChan {
-					// Print raw output directly to stdout. Let the terminal handle \r and colors.
 					fmt.Fprint(os.Stdout, outputLine.Line)
 				}
 			}()
 
-			// Wait for the error channel to return the final error status
 			stepErr = <-errChan
-
-			// Wait for the output processing goroutine to finish
 			wg.Wait()
-
-			// Print a newline AFTER all remote output is done.
 			fmt.Println()
 		}
 
-		// --- Handle Step Completion ---
 		if stepErr != nil {
-			// Error details might have been printed by the command itself.
-			return fmt.Errorf("step '%s' failed", step.Name) // Simplified error message
+			return fmt.Errorf("step '%s' failed", step.Name)
 		}
 		successColor.Printf("--- Step '%s' completed successfully for %s (%s) ---\n", step.Name, stack.Name, identifierColor.Sprint(stack.ServerName))
 	}
@@ -978,55 +907,42 @@ func runHostAction(actionName string, targets []runner.HostTarget) error {
 			var outputWg sync.WaitGroup
 
 			if !t.IsRemote {
-				// --- Local Execution ---
-				// Output is connected directly in runner.go.
-				// We only need to wait for the command to finish via stepErrChan.
 				stepErr = <-stepErrChan
-				// Print a newline after direct output finishes.
 				fmt.Println()
 			} else {
-				// --- Remote Execution ---
-				// Process output via the outChan as before.
 				outputWg.Add(1)
 				go func() {
 					defer outputWg.Done()
 					for outputLine := range outChan {
-						// Print raw output directly to stdout. Let the terminal handle \r and colors.
 						fmt.Fprint(os.Stdout, outputLine.Line)
 					}
 				}()
 
 				stepErr = <-stepErrChan
-				outputWg.Wait() // Ensure all remote output is processed before checking error
-
-				// Print a newline AFTER all remote output is done.
+				outputWg.Wait()
 				fmt.Println()
 			}
 
-			// --- Handle Step Completion ---
 			if stepErr != nil {
-				err := fmt.Errorf("step '%s' failed for host %s", step.Name, t.ServerName) // Simplified error
-				// Avoid printing error details again if they were part of command output
-				logger.Errorf("%v", err) // Print simplified error summary
-				errChan <- err           // Send error to the channel
+				err := fmt.Errorf("step '%s' failed for host %s", step.Name, t.ServerName)
+				logger.Errorf("%v", err)
+				errChan <- err
 				return
 			}
 			successColor.Printf("--- Step '%s' completed successfully for host %s ---\n", step.Name, identifierColor.Sprint(t.ServerName))
 		}(target)
 	}
 
-	// Wait for all goroutines to finish
 	wg.Wait()
-	close(errChan) // Close the error channel after all goroutines are done
+	close(errChan)
 
-	// Check if any errors occurred
 	var collectedErrors []error
 	for err := range errChan {
 		collectedErrors = append(collectedErrors, err)
 	}
 
 	if len(collectedErrors) > 0 {
-		return fmt.Errorf("%d host action(s) failed", len(collectedErrors)) // Return a summary error
+		return fmt.Errorf("%d host action(s) failed", len(collectedErrors))
 	}
 
 	return nil
@@ -1050,25 +966,23 @@ Targets can be 'local', specific remote host names, or left empty to target ALL 
 		}
 
 		targetsToPrune := []runner.HostTarget{}
-		targetMap := make(map[string]bool) // To avoid duplicates
+		targetMap := make(map[string]bool)
 
 		if len(args) == 0 {
-			// No args: target local + all remotes
 			statusColor.Println("Targeting local host and all configured remote hosts for prune...")
 			targetsToPrune = append(targetsToPrune, runner.HostTarget{IsRemote: false, ServerName: "local"})
 			targetMap["local"] = true
 			for _, host := range cfg.SSHHosts {
-				if !host.Disabled { // Skip disabled hosts
+				if !host.Disabled {
 					targetsToPrune = append(targetsToPrune, runner.HostTarget{IsRemote: true, HostConfig: &host, ServerName: host.Name})
 					targetMap[host.Name] = true
 				}
 			}
 		} else {
-			// Specific args provided
 			statusColor.Printf("Targeting specified hosts for prune: %s...\n", strings.Join(args, ", "))
 			for _, targetName := range args {
 				if targetMap[targetName] {
-					continue // Skip duplicates
+					continue
 				}
 
 				if targetName == "local" {
@@ -1077,7 +991,7 @@ Targets can be 'local', specific remote host names, or left empty to target ALL 
 				} else {
 					found := false
 					for i := range cfg.SSHHosts {
-						host := cfg.SSHHosts[i] // Use index to get addressable copy for pointer
+						host := cfg.SSHHosts[i]
 						if host.Name == targetName {
 							if host.Disabled {
 								errorColor.Fprintf(os.Stderr, "Warning: Skipping disabled host '%s'\n", targetName)

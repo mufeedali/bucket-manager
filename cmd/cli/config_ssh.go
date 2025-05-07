@@ -564,9 +564,7 @@ func promptForAuthDetails(host *config.SSHHost, isEditing bool, originalPassword
 	if authChoiceStr != "" {
 		choice, err := strconv.Atoi(authChoiceStr)
 		if err != nil || choice < 1 || choice > 3 {
-			// This is a warning/fallback, not a critical error stopping execution. Keep direct print.
 			fmt.Fprintf(os.Stderr, "Invalid choice '%s', using default/current method (%d).\n", authChoiceStr, currentAuthMethod)
-			// logger.Warnf("Invalid choice '%s', using default/current method (%d).", authChoiceStr, currentAuthMethod)
 			// Keep newAuthChoice as currentAuthMethod
 		} else {
 			newAuthChoice = choice

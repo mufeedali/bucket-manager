@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -60,7 +61,7 @@ func (m *model) handleStackListKeys(msg tea.KeyMsg) []tea.Cmd {
 			m.cursor = 0
 		}
 		cursorMoved = true
-		m.viewport.PageUp() // Use bubble's PageUp
+		m.viewport.PageUp()
 	case key.Matches(msg, m.keymap.PgDown):
 		m.cursor += m.viewport.Height
 		lastIdx := len(m.stacks) - 1
@@ -68,7 +69,7 @@ func (m *model) handleStackListKeys(msg tea.KeyMsg) []tea.Cmd {
 			m.cursor = lastIdx
 		}
 		cursorMoved = true
-		m.viewport.PageDown() // Use bubble's PageDown
+		m.viewport.PageDown()
 	default:
 		// Handle actions that don't involve cursor movement first
 		switch {
@@ -203,7 +204,7 @@ func (m *model) handleSshAddFormKeys(msg tea.KeyMsg) []tea.Cmd {
 	case key.Matches(msg, m.keymap.Enter):
 		// Prevent submitting when focus is on the non-input Auth Method selector
 		if m.formFocusIndex == authMethodFocusIndex {
-			return cmds // Do nothing
+			return cmds
 		}
 		// Attempt to build and save the host
 		m.formError = nil // Clear previous error
@@ -323,7 +324,7 @@ func (m *model) handleSshEditFormKeys(msg tea.KeyMsg) []tea.Cmd {
 	case key.Matches(msg, m.keymap.Enter):
 		// Prevent submitting when focus is on non-input selectors
 		if m.formFocusIndex == authMethodFocusIndex || m.formFocusIndex == disabledToggleFocusIndex {
-			return cmds // Do nothing
+			return cmds
 		}
 		// Attempt to build and save the edited host
 		m.formError = nil // Clear previous error
@@ -438,7 +439,7 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 	case key.Matches(msg, m.keymap.Enter):
 		// Prevent submitting when focus is on the non-input Auth Method selector
 		if m.formFocusIndex == authMethodFocusIndex {
-			return cmds // Do nothing
+			return cmds
 		}
 
 		// --- Process the current host's details ---
@@ -541,7 +542,7 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 			focusedInputIndex = keyPathInputIdx
 		case authMethodPassword:
 			focusedInputIndex = passwordInputIdx
-		// No input to focus for authMethodAgent
+			// No input to focus for authMethodAgent
 		}
 		// No input focus for authMethodFocusIndex
 	}
@@ -628,4 +629,122 @@ func (m *model) startNextStepCmd() tea.Cmd {
 	m.viewport.GotoBottom()
 	// Return the command to execute the step
 	return runStepCmd(step)
+}
+
+// handleViewportKeys handles key presses when the main output viewport is active (e.g., during sequence execution).
+func (m *model) handleViewportKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	var vpCmd tea.Cmd
+
+	switch {
+	case key.Matches(msg, m.keymap.Quit):
+		return m, tea.Quit
+	case key.Matches(msg, m.keymap.Back), key.Matches(msg, m.keymap.Enter):
+		// Return to stack list and refresh statuses
+		for _, stack := range m.stacksInSequence {
+			if stack != nil {
+				stackID := stack.Identifier()
+				// Check if status is not already loading or loaded to avoid redundant fetches
+				if !m.loadingStatus[stackID] {
+					if _, loaded := m.stackStatuses[stackID]; !loaded {
+						m.loadingStatus[stackID] = true
+						cmds = append(cmds, m.fetchStackStatusCmd(*stack))
+					}
+				}
+			}
+		}
+		m.currentState = stateStackList
+		m.outputContent = ""
+		m.lastError = nil
+		m.currentSequence = nil
+		m.currentStepIndex = 0
+		m.sequenceStack = nil
+		m.stacksInSequence = nil
+		m.viewport.GotoTop()
+		return m, tea.Batch(cmds...) // Return immediately after state change and commands
+	}
+
+	// Default: Update the viewport for scrolling etc.
+	m.viewport, vpCmd = m.viewport.Update(msg)
+	cmds = append(cmds, vpCmd)
+
+	return m, tea.Batch(cmds...) // Return model and any viewport commands
+}
+
+// handleFormInputUpdates handles the update logic for text input fields within forms,
+// before state-specific key handling.
+func (m *model) handleFormInputUpdates(msg tea.KeyMsg) tea.Cmd {
+	var cmds []tea.Cmd
+	focusedInputIndex := -1 // Index within m.formInputs
+
+	// Determine which input field has logical focus based on the current state and formFocusIndex
+	switch m.currentState {
+	case stateSshConfigAddForm:
+		switch m.formFocusIndex {
+		case 0, 1, 2, 3, 4: // Name, Hostname, User, Port, RemoteRoot
+			focusedInputIndex = m.formFocusIndex
+		case 6: // Key Path (only focusable if authMethodKey)
+			if m.formAuthMethod == authMethodKey {
+				focusedInputIndex = 5 // Actual index in m.formInputs
+			}
+		case 7: // Password (only focusable if authMethodPassword)
+			if m.formAuthMethod == authMethodPassword {
+				focusedInputIndex = 6 // Actual index in m.formInputs
+			}
+		}
+	case stateSshConfigEditForm:
+		switch m.formFocusIndex {
+		case 0, 1, 2, 3, 4: // Name, Hostname, User, Port, RemoteRoot
+			focusedInputIndex = m.formFocusIndex
+		case 6: // Key Path (only focusable if authMethodKey)
+			if m.formAuthMethod == authMethodKey {
+				focusedInputIndex = 5 // Actual index in m.formInputs
+			}
+		case 7: // Password (only focusable if authMethodPassword)
+			if m.formAuthMethod == authMethodPassword {
+				focusedInputIndex = 6 // Actual index in m.formInputs
+			}
+		}
+		// Note: Disabled toggle (index 8) doesn't have a text input
+	case stateSshConfigImportDetails:
+		const (
+			remoteRootFocusIndex = 0
+			// authMethodFocusIndex = 1 (no text input)
+			keyOrPasswordFocusIndex = 2
+		)
+		authNeeded := false
+		if m.configuringHostIdx >= 0 && m.configuringHostIdx < len(m.importableHosts) {
+			// Check if the *original* potential host needed auth details
+			authNeeded = m.importableHosts[m.configuringHostIdx].KeyPath == ""
+		}
+
+		switch m.formFocusIndex {
+		case remoteRootFocusIndex:
+			focusedInputIndex = 4 // Actual index in m.formInputs for Remote Root
+		case keyOrPasswordFocusIndex:
+			if authNeeded { // Only allow input if auth was needed initially
+				switch m.formAuthMethod {
+				case authMethodKey:
+					focusedInputIndex = 5 // Actual index for Key Path
+				case authMethodPassword:
+					focusedInputIndex = 6 // Actual index for Password
+				}
+			}
+		}
+	}
+
+	// If a valid text input is focused, update it
+	if focusedInputIndex != -1 && focusedInputIndex < len(m.formInputs) {
+		var inputCmd tea.Cmd
+		// Create a temporary variable for the update result
+		var updatedInput textinput.Model
+		updatedInput, inputCmd = m.formInputs[focusedInputIndex].Update(msg)
+		// Assign the updated input back to the slice
+		m.formInputs[focusedInputIndex] = updatedInput
+		if inputCmd != nil {
+			cmds = append(cmds, inputCmd)
+		}
+	}
+
+	return tea.Batch(cmds...)
 }
