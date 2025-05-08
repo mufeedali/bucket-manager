@@ -59,18 +59,21 @@ func runSSHCommand(
 	}
 
 	// Request a PTY for interactive commands like podman compose (enables color)
-	// Use sensible defaults for terminal type and size.
-	modes := gossh.TerminalModes{
-		gossh.ECHO:          0,     // Disable echoing input
-		gossh.TTY_OP_ISPEED: 14400, // Input speed = 14.4kbaud
-		gossh.TTY_OP_OSPEED: 14400, // Output speed = 14.4kbaud
-	}
-	// Use a common terminal type like xterm-256color
-	if err := session.RequestPty("xterm-256color", 80, 40, modes); err != nil {
-		// Log non-critical error, but continue execution
-		// Some servers might not support PTY allocation but commands might still work
-		// Using fmt.Fprintf to avoid circular dependency on logger package
-		fmt.Fprintf(os.Stderr, "Warning: Failed to request pty for %s (continuing): %v\n", cmdDesc, err)
+	// Only do this if in CLI mode.
+	if cliMode {
+		// Use sensible defaults for terminal type and size.
+		modes := gossh.TerminalModes{
+			gossh.ECHO:          0,     // Disable echoing input
+			gossh.TTY_OP_ISPEED: 14400, // Input speed = 14.4kbaud
+			gossh.TTY_OP_OSPEED: 14400, // Output speed = 14.4kbaud
+		}
+		// Use a common terminal type like xterm-256color
+		if err := session.RequestPty("xterm-256color", 80, 40, modes); err != nil {
+			// Log non-critical error, but continue execution
+			// Some servers might not support PTY allocation but commands might still work
+			// Using fmt.Fprintf to avoid circular dependency on logger package
+			fmt.Fprintf(os.Stderr, "Warning: Failed to request pty for %s (continuing): %v\n", cmdDesc, err)
+		}
 	}
 
 	if err := session.Start(remoteCmdString); err != nil {
