@@ -9,6 +9,7 @@ import (
 	"bucket-manager/internal/runner"
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -168,7 +169,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
 			default:
-				cmds = append(cmds, m.handleStackListKeys(msg)...)
+				cmds = slices.Concat(cmds, m.handleStackListKeys(msg))
 			}
 
 		case stateStackDetails:
@@ -307,7 +308,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
 			default:
-				cmds = append(cmds, m.handleSshAddFormKeys(msg)...)
+				cmds = slices.Concat(cmds, m.handleSshAddFormKeys(msg))
 			}
 
 		case stateSshConfigEditForm:
@@ -322,7 +323,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
 			default:
-				cmds = append(cmds, m.handleSshEditFormKeys(msg)...)
+				cmds = slices.Concat(cmds, m.handleSshEditFormKeys(msg))
 			}
 
 		case stateSshConfigImportSelect:
@@ -422,7 +423,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			default:
 				isCharKey := msg.Type == tea.KeyRunes && len(msg.Runes) == 1
 				if !isScrollKey && !isCharKey {
-					cmds = append(cmds, m.handleSshImportDetailsFormKeys(msg)...)
+					cmds = slices.Concat(cmds, m.handleSshImportDetailsFormKeys(msg))
 				}
 			}
 
@@ -433,7 +434,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.outputContent = statusStyle.Render(fmt.Sprintf("Initiating prune for %s...", m.hostsToPrune[0].ServerName)) + "\n"
 					m.currentState = stateRunningHostAction
 					m.hostActionError = nil
-					// For now, TUI only prunes one host at a time
 					step := runner.PruneHostStep(m.hostsToPrune[0])
 					m.currentHostActionStep = step
 					m.viewport.SetContent(m.outputContent) // Ensure viewport shows the initial message

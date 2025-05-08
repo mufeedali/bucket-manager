@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 type Manager struct {
@@ -53,10 +55,21 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 	}
 
 	sshConfig := &ssh.ClientConfig{
-		User:            hostConfig.User,
-		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // Using insecure host key verification for now.
-		Timeout:         10 * time.Second,
+		User: hostConfig.User,
+		Auth: authMethods,
+		Timeout: 10 * time.Second,
+	}
+	// Add proper host key verification
+	hostKeyCallback, khErr := createHostKeyCallback()
+	if khErr != nil {
+		// Log the error but potentially continue if it's just a missing file
+		// Allowing connection without verification is risky, but might be acceptable for some tools.
+		// We'll log and proceed without strict verification if the file is missing/unparsable.
+		// A better approach might involve prompting the user or failing.
+		logger.Warnf("Could not create known_hosts callback for %s: %v. Host key will not be verified.", hostConfig.Name, khErr)
+		sshConfig.HostKeyCallback = ssh.InsecureIgnoreHostKey() // Fallback to insecure
+	} else {
+		sshConfig.HostKeyCallback = hostKeyCallback
 	}
 
 	port := hostConfig.Port
@@ -101,12 +114,23 @@ func (m *Manager) getAuthMethods(hostConfig config.SSHHost) ([]ssh.AuthMethod, e
 			return nil, fmt.Errorf("failed to read private key file %s: %w", keyPath, err)
 		}
 
-		// Currently only supports unencrypted keys.
+		// Attempt to parse the private key
 		signer, err := ssh.ParsePrivateKey(key)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse private key file %s: %w", keyPath, err)
+			// Check if the error is due to encryption
+			if _, ok := err.(*ssh.PassphraseMissingError); ok {
+				// Log a warning that encrypted keys are not yet supported by this method.
+				// We won't add this key as an auth method in this case.
+				logger.Warnf("Private key file %s is encrypted and passphrase prompting is not yet supported here. Skipping key.", keyPath)
+				// Continue to check other auth methods (agent, password)
+			} else {
+				// Return other parsing errors
+				return nil, fmt.Errorf("failed to parse private key file %s: %w", keyPath, err)
+			}
+		} else {
+			// If parsing succeeded (unencrypted key), add it as an auth method
+			methods = append(methods, ssh.PublicKeys(signer))
 		}
-		methods = append(methods, ssh.PublicKeys(signer))
 	}
 
 	if socket := os.Getenv("SSH_AUTH_SOCK"); socket != "" {
@@ -145,4 +169,33 @@ func (m *Manager) Close(hostName string) {
 		}
 		delete(m.clients, hostName)
 	}
+}
+
+// createHostKeyCallback attempts to load the user's known_hosts file.
+func createHostKeyCallback() (ssh.HostKeyCallback, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user home directory for known_hosts: %w", err)
+	}
+	knownHostsPath := filepath.Join(homeDir, ".ssh", "known_hosts")
+
+	// knownhosts.New also handles creating the file if it doesn't exist,
+	// but it's better practice to check existence or handle the error specifically.
+	// We'll let it try to create/read and handle potential errors.
+	callback, err := knownhosts.New(knownHostsPath)
+	if err != nil {
+		// Don't treat file not found as a fatal error for the callback creation itself,
+		// but log it. The actual connection attempt will fail later if the key is unknown.
+		// Other errors (like permission issues) might be more critical.
+		if os.IsNotExist(err) {
+			logger.Warnf("known_hosts file (%s) not found. Will attempt connection without verification.", knownHostsPath)
+			// Return InsecureIgnoreHostKey as a fallback ONLY if file doesn't exist.
+			// This allows first-time connections but is less secure.
+			// Consider prompting user in a real application.
+			return ssh.InsecureIgnoreHostKey(), nil // Return nil error as we handled the specific case
+		}
+		// For other errors (permissions, format issues), return the error.
+		return nil, fmt.Errorf("failed to load or parse known_hosts file %s: %w", knownHostsPath, err)
+	}
+	return callback, nil
 }

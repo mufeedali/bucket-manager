@@ -21,7 +21,7 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-const maxConcurrentDiscoveries = 8 // Limit concurrent SSH discoveries
+const maxConcurrentDiscoveries = 8
 
 var sshManager *ssh.Manager
 
@@ -66,7 +66,7 @@ func GetComposeRootDirectory() (string, error) {
 
 		info, statErr := os.Stat(localRootPath)
 		if statErr == nil && info.IsDir() {
-			return localRootPath, nil // Configured path is valid
+			return localRootPath, nil
 		}
 
 		// If configured path is invalid, return an error. Do not fall back.

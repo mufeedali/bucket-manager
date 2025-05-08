@@ -389,7 +389,6 @@ func (m *model) renderRunningHostActionView() (string, string) {
 	if m.currentHostActionStep.Name != "" {
 		actionName = m.currentHostActionStep.Name
 	}
-	// Assuming prune is the only host action for now, get target from hostsToPrune
 	if len(m.hostsToPrune) > 0 {
 		targetName = m.hostsToPrune[0].ServerName
 	}
@@ -512,7 +511,7 @@ func (m *model) renderSshConfigEditFormView() (string, string) {
 	help := strings.Builder{}
 	help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.Tab.Help().Key + "/" + m.keymap.ShiftTab.Help().Key + ": navigate | ")
 	help.WriteString(m.keymap.Left.Help().Key + "/" + m.keymap.Right.Help().Key + ": change auth | ")
-	help.WriteString(m.keymap.ToggleDisabled.Help().Key + ": " + m.keymap.ToggleDisabled.Help().Desc + " | ") // Added toggle help
+	help.WriteString(m.keymap.ToggleDisabled.Help().Key + ": " + m.keymap.ToggleDisabled.Help().Desc + " | ")
 	help.WriteString(m.keymap.Enter.Help().Key + ": save | ")
 	help.WriteString(m.keymap.Esc.Help().Key + ": " + m.keymap.Esc.Help().Desc + " | ")
 	help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)

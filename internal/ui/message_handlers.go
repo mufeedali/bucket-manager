@@ -15,6 +15,35 @@ import (
 // --- Message Handlers ---
 // These methods handle specific message types received by the model's Update function.
 
+// triggerConfigAndStackRefresh resets UI state related to stacks and config,
+// then returns commands to reload SSH config and rediscover stacks.
+// Used after successful add/edit/remove/import of SSH hosts.
+func (m *model) triggerConfigAndStackRefresh() tea.Cmd {
+	// Reset UI state
+	m.currentState = stateLoadingStacks // Show loading while rediscovering
+	m.isDiscovering = true
+	m.stacks = nil // Clear existing stacks
+	m.discoveryErrors = nil
+	m.stackStatuses = make(map[string]runner.StackRuntimeInfo) // Clear statuses
+	m.loadingStatus = make(map[string]bool)
+	m.cursor = 0       // Reset stack list cursor
+	m.configCursor = 0 // Reset config list cursor
+
+	// Clean up any lingering form/import state
+	m.formError = nil
+	m.formInputs = nil
+	m.hostToEdit = nil
+	m.hostToRemove = nil
+	m.importableHosts = nil
+	m.selectedImportIdxs = nil
+	m.hostsToConfigure = nil
+	m.importError = nil
+	m.importInfoMsg = ""
+
+	// Return commands to reload config AND rediscover stacks
+	return tea.Batch(loadSshConfigCmd(), findStacksCmd())
+}
+
 func handleWindowSizeMsg(m *model, msg tea.WindowSizeMsg) tea.Cmd {
 	m.width = msg.Width
 	m.height = msg.Height
@@ -109,16 +138,8 @@ func handleSshHostsImportedMsg(m *model, msg sshHostsImportedMsg) tea.Cmd {
 	m.hostsToConfigure = nil
 	m.formInputs = nil
 
-	// Rediscover stacks after import
-	m.currentState = stateLoadingStacks // Show loading while rediscovering
-	m.isDiscovering = true
-	m.stacks = nil
-	m.discoveryErrors = nil
-	m.stackStatuses = make(map[string]runner.StackRuntimeInfo)
-	m.loadingStatus = make(map[string]bool)
-	m.cursor = 0
-	// Return commands to reload config AND rediscover stacks
-	return tea.Batch(loadSshConfigCmd(), findStacksCmd())
+	// Trigger refresh
+	return m.triggerConfigAndStackRefresh()
 }
 
 func handleStackDiscoveredMsg(m *model, msg stackDiscoveredMsg) tea.Cmd {
@@ -169,8 +190,7 @@ func handleDiscoveryFinishedMsg(m *model) tea.Cmd {
 			m.lastError = nil
 			if len(m.discoveryErrors) > 0 {
 				// Maybe set an info message instead of lastError?
-				// m.infoMessage = fmt.Sprintf("Discovery finished with %d errors.", len(m.discoveryErrors))
-				m.lastError = fmt.Errorf("discovery finished with errors") // Keep as error for now
+				m.lastError = fmt.Errorf("discovery finished with errors")
 			}
 		}
 		m.viewport.GotoTop() // Reset viewport scroll for the list
@@ -215,15 +235,8 @@ func handleStepFinishedMsg(m *model, msg stepFinishedMsg) tea.Cmd {
 			m.currentState = stateSshConfigList // Go back to list on error
 			cmds = append(cmds, loadSshConfigCmd())
 		} else {
-			// Successful removal: Reload config and rediscover stacks
-			m.currentState = stateLoadingStacks // Show loading while rediscovering
-			m.isDiscovering = true
-			m.stacks = nil // Clear existing stacks
-			m.discoveryErrors = nil
-			m.stackStatuses = make(map[string]runner.StackRuntimeInfo) // Clear statuses
-			m.loadingStatus = make(map[string]bool)
-			m.cursor = 0
-			cmds = append(cmds, loadSshConfigCmd(), findStacksCmd())
+			// Successful removal: Trigger refresh
+			cmds = append(cmds, m.triggerConfigAndStackRefresh())
 		}
 
 	case stateRunningSequence:
@@ -338,18 +351,8 @@ func handleSshHostAddedMsg(m *model, msg sshHostAddedMsg) tea.Cmd {
 			m.formError = msg.err // Display error on the form
 			return nil            // Stay in the form state
 		}
-		// Success: Clean up form, reload config, rediscover stacks
-		m.formError = nil
-		m.formInputs = nil
-		m.configCursor = 0 // Reset cursor in config list
-
-		m.currentState = stateLoadingStacks // Show loading while rediscovering
-		m.isDiscovering = true
-		m.stacks = nil
-		m.discoveryErrors = nil
-		m.stackStatuses = make(map[string]runner.StackRuntimeInfo)
-		m.loadingStatus = make(map[string]bool)
-		return tea.Batch(loadSshConfigCmd(), findStacksCmd())
+		// Success: Trigger refresh
+		return m.triggerConfigAndStackRefresh()
 	}
 	// Ignore if received in an unexpected state
 	return nil
@@ -362,19 +365,8 @@ func handleSshHostEditedMsg(m *model, msg sshHostEditedMsg) tea.Cmd {
 			m.formError = msg.err // Display error on the form
 			return nil            // Stay in the form state
 		}
-		// Success: Clean up form, reload config, rediscover stacks
-		m.formError = nil
-		m.formInputs = nil
-		m.hostToEdit = nil // Clear the host being edited
-		m.configCursor = 0 // Reset cursor in config list
-
-		m.currentState = stateLoadingStacks // Show loading while rediscovering
-		m.isDiscovering = true
-		m.stacks = nil
-		m.discoveryErrors = nil
-		m.stackStatuses = make(map[string]runner.StackRuntimeInfo)
-		m.loadingStatus = make(map[string]bool)
-		return tea.Batch(loadSshConfigCmd(), findStacksCmd())
+		// Success: Trigger refresh
+		return m.triggerConfigAndStackRefresh()
 	}
 	// Ignore if received in an unexpected state
 	return nil

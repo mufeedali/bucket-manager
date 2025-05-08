@@ -32,7 +32,7 @@ func RunTUI() {
 	runner.InitSSHManager(sshManager)
 
 	m := ui.InitialModel()
-	p := tea.NewProgram(&m, tea.WithAltScreen()) // Use AltScreen
+	p := tea.NewProgram(&m, tea.WithAltScreen())
 	ui.BubbleProgram = p
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Alas, there's been an error: %v\n", err)

@@ -267,66 +267,11 @@ type StackRuntimeInfo struct {
 	Error         error
 }
 
-func GetStackStatus(stack discovery.Stack) StackRuntimeInfo {
-	info := StackRuntimeInfo{Stack: stack, OverallStatus: StatusUnknown}
-	cmdDesc := fmt.Sprintf("status check for stack %s", stack.Identifier())
-	psArgs := []string{"compose", "ps", "--format", "json", "-a"}
-
-	var output []byte
-	var err error
-	var stderrStr string
-
-	if stack.IsRemote {
-		output, err = runSSHStatusCheck(stack, psArgs, cmdDesc)
-		// runSSHStatusCheck returns combined output and error
-	} else {
-		cmd := exec.Command("podman", psArgs...)
-		cmd.Dir = stack.Path
-		var stdoutBuf, stderrBuf bytes.Buffer
-		cmd.Stdout = &stdoutBuf
-		cmd.Stderr = &stderrBuf
-
-		err = cmd.Run()
-		output = stdoutBuf.Bytes()
-		stderrStr = stderrBuf.String()
-	}
-
-	if err != nil {
-		// Check common errors indicating the stack is simply down or doesn't exist
-		errMsgLower := strings.ToLower(err.Error())
-		stderrLower := ""
-		if !stack.IsRemote { // Only rely on stderrStr if it was explicitly captured locally
-			stderrLower = strings.ToLower(stderrStr)
-		} else { // For remote, check the combined output string as stderr isn't separate
-			stderrLower = strings.ToLower(string(output))
-		}
-
-		if strings.Contains(errMsgLower, "exit status") ||
-			strings.Contains(stderrLower, "no containers found") ||
-			strings.Contains(stderrLower, "no such file or directory") { // If compose file is missing
-			info.OverallStatus = StatusDown
-			return info // Not a failure, just down.
-		}
-
-		info.OverallStatus = StatusError
-		errMsg := fmt.Sprintf("failed to run %s", cmdDesc)
-		// Append stderr from local execution if available and provides context
-		if !stack.IsRemote && stderrStr != "" {
-			errMsg = fmt.Sprintf("%s: %s", errMsg, strings.TrimSpace(stderrStr))
-		}
-		info.Error = fmt.Errorf("%s: %w", errMsg, err)
-		return info
-	}
-
-	if len(bytes.TrimSpace(output)) == 0 {
-		info.OverallStatus = StatusDown
-		return info
-	}
-
+// parseContainerStatusOutput processes the JSON stream output from 'podman compose ps'.
+func parseContainerStatusOutput(output []byte) ([]ContainerState, error) {
 	var containers []ContainerState
 	var firstUnmarshalError error
 
-	// Process the output line by line, as podman compose ps --format json outputs a stream
 	scanner := bufio.NewScanner(bytes.NewReader(output))
 	for scanner.Scan() {
 		lineBytes := scanner.Bytes()
@@ -351,43 +296,130 @@ func GetStackStatus(stack discovery.Stack) StackRuntimeInfo {
 		}
 	}
 
+	// Check if the error might be the "no containers found" case by examining the raw output
+	// This check is done here because even if parsing fails, the output might indicate no containers.
 	if firstUnmarshalError != nil {
-		// Check if the error might be the "no containers found" case by examining the raw output
 		outputLower := strings.ToLower(string(output))
 		if strings.Contains(outputLower, "no containers found") {
-			info.OverallStatus = StatusDown
-			return info
+			// Treat "no containers found" as a successful parse yielding zero containers, clear the error.
+			return []ContainerState{}, nil
 		}
-		info.OverallStatus = StatusError
-		info.Error = firstUnmarshalError
-		return info
+		return nil, firstUnmarshalError
 	}
 
-	info.Containers = containers
+	return containers, nil
+}
 
+// aggregateOverallStatus determines the overall stack status based on container states.
+func aggregateOverallStatus(containers []ContainerState) StackStatus {
 	if len(containers) == 0 {
-		info.OverallStatus = StatusDown
-		return info
+		return StatusDown
 	}
 
 	allRunning := true
 	anyRunning := false
 	for _, c := range containers {
-		isRunning := strings.Contains(strings.ToLower(c.Status), "running") || strings.Contains(strings.ToLower(c.Status), "healthy") || strings.HasPrefix(c.Status, "Up")
+		// Consider variations in status strings (case-insensitive)
+		statusLower := strings.ToLower(c.Status)
+		isRunning := strings.Contains(statusLower, "running") ||
+			strings.Contains(statusLower, "healthy") ||
+			strings.HasPrefix(statusLower, "up")
+
 		if isRunning {
 			anyRunning = true
 		} else {
 			allRunning = false
 		}
+		// Optimization: if we find one running and one not running, it's Partial
+		if anyRunning && !allRunning {
+			return StatusPartial
+		}
 	}
 
 	if allRunning {
-		info.OverallStatus = StatusUp
-	} else if anyRunning {
-		info.OverallStatus = StatusPartial
-	} else {
-		info.OverallStatus = StatusDown
+		return StatusUp
 	}
+	// If loop finishes and !allRunning, but anyRunning was true, it's Partial (handled above)
+	// If loop finishes and !allRunning and !anyRunning, it means all are down/stopped/exited.
+	if !anyRunning {
+		return StatusDown
+	}
+
+	// Fallback/Should not happen if logic above is correct
+	return StatusUnknown
+}
+
+func GetStackStatus(stack discovery.Stack) StackRuntimeInfo {
+	info := StackRuntimeInfo{Stack: stack, OverallStatus: StatusUnknown}
+	cmdDesc := fmt.Sprintf("status check for stack %s", stack.Identifier())
+	psArgs := []string{"compose", "ps", "--format", "json", "-a"}
+
+	var output []byte
+	var cmdErr error
+	var stderrStr string // Only relevant for local execution
+
+	// 1. Execute command (local or remote)
+	if stack.IsRemote {
+		output, cmdErr = runSSHStatusCheck(stack, psArgs, cmdDesc)
+		// runSSHStatusCheck returns combined output and the command error
+	} else {
+		cmd := exec.Command("podman", psArgs...)
+		cmd.Dir = stack.Path
+		var stdoutBuf, stderrBuf bytes.Buffer
+		cmd.Stdout = &stdoutBuf
+		cmd.Stderr = &stderrBuf
+
+		cmdErr = cmd.Run()
+		output = stdoutBuf.Bytes()
+		stderrStr = stderrBuf.String() // Capture stderr for local
+	}
+
+	// 2. Handle command execution errors
+	if cmdErr != nil {
+		// Check common errors indicating the stack is simply down or doesn't exist
+		errMsgLower := strings.ToLower(cmdErr.Error())
+		// Check stderr for local, combined output for remote
+		outputToCheck := stderrStr
+		if stack.IsRemote {
+			outputToCheck = string(output)
+		}
+		outputToCheckLower := strings.ToLower(outputToCheck)
+
+		if strings.Contains(errMsgLower, "exit status") ||
+			strings.Contains(outputToCheckLower, "no containers found") ||
+			strings.Contains(outputToCheckLower, "no such file or directory") { // If compose file is missing
+			info.OverallStatus = StatusDown
+			return info // Not a failure, just down.
+		}
+
+		// It's a real command execution error
+		info.OverallStatus = StatusError
+		errMsg := fmt.Sprintf("failed to run %s", cmdDesc)
+		// Append stderr from local execution if available and provides context
+		if !stack.IsRemote && stderrStr != "" {
+			errMsg = fmt.Sprintf("%s: %s", errMsg, strings.TrimSpace(stderrStr))
+		}
+		info.Error = fmt.Errorf("%s: %w", errMsg, cmdErr)
+		return info
+	}
+
+	// 3. Handle empty output (implies down)
+	if len(bytes.TrimSpace(output)) == 0 {
+		info.OverallStatus = StatusDown
+		return info
+	}
+
+	// 4. Parse the output
+	containers, parseErr := parseContainerStatusOutput(output)
+	if parseErr != nil {
+		info.OverallStatus = StatusError
+		info.Error = parseErr // Use the specific parsing error
+		return info
+	}
+
+	// 5. Aggregate status from parsed containers
+	info.Containers = containers
+	info.OverallStatus = aggregateOverallStatus(containers)
 
 	return info
 }

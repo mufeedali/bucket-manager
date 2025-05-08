@@ -82,13 +82,13 @@ func (m *model) handleStackListKeys(msg tea.KeyMsg) []tea.Cmd {
 				}
 			}
 		case key.Matches(msg, m.keymap.UpAction):
-			cmds = append(cmds, m.runSequenceOnSelection(runner.UpSequence)...)
+			cmds = slices.Concat(cmds, m.runSequenceOnSelection(runner.UpSequence))
 		case key.Matches(msg, m.keymap.DownAction):
-			cmds = append(cmds, m.runSequenceOnSelection(runner.DownSequence)...)
+			cmds = slices.Concat(cmds, m.runSequenceOnSelection(runner.DownSequence))
 		case key.Matches(msg, m.keymap.RefreshAction):
-			cmds = append(cmds, m.runSequenceOnSelection(runner.RefreshSequence)...)
+			cmds = slices.Concat(cmds, m.runSequenceOnSelection(runner.RefreshSequence))
 		case key.Matches(msg, m.keymap.PullAction):
-			cmds = append(cmds, m.runSequenceOnSelection(runner.PullSequence)...)
+			cmds = slices.Concat(cmds, m.runSequenceOnSelection(runner.PullSequence))
 		case key.Matches(msg, m.keymap.Enter):
 			if len(m.selectedStackIdxs) > 0 {
 				// Show details for multiple selected stacks
@@ -139,31 +139,11 @@ func (m *model) handleStackListKeys(msg tea.KeyMsg) []tea.Cmd {
 	return cmds
 }
 
-func (m *model) handleSshAddFormKeys(msg tea.KeyMsg) []tea.Cmd {
-	var cmds []tea.Cmd
+// --- Form Navigation and Styling Helpers ---
 
-	// Define logical focus indices for the Add form
-	const (
-		nameFocusIndex       = 0
-		hostnameFocusIndex   = 1
-		userFocusIndex       = 2
-		portFocusIndex       = 3
-		remoteRootFocusIndex = 4
-		authMethodFocusIndex = 5 // The selector itself
-		keyPathFocusIndex    = 6 // Logical index for key path input
-		passwordFocusIndex   = 7 // Logical index for password input
-	)
-
-	// Build the map of currently navigable logical indices based on auth method
-	focusMap := []int{nameFocusIndex, hostnameFocusIndex, userFocusIndex, portFocusIndex, remoteRootFocusIndex, authMethodFocusIndex}
-	switch m.formAuthMethod {
-	case authMethodKey:
-		focusMap = append(focusMap, keyPathFocusIndex)
-	case authMethodPassword:
-		focusMap = append(focusMap, passwordFocusIndex)
-	}
-
-	// Find the current position in the focus map
+// handleFormNavigation updates the formFocusIndex based on navigation keys.
+// focusMap lists the logical indices that are currently navigable.
+func (m *model) handleFormNavigation(msg tea.KeyMsg, focusMap []int) bool {
 	currentIndexInMap := -1
 	for i, logicalIndex := range focusMap {
 		if logicalIndex == m.formFocusIndex {
@@ -171,91 +151,34 @@ func (m *model) handleSshAddFormKeys(msg tea.KeyMsg) []tea.Cmd {
 			break
 		}
 	}
+	if currentIndexInMap == -1 {
+		return false // Current focus not in the map, shouldn't happen
+	}
 
+	navigated := false
 	switch {
 	case key.Matches(msg, m.keymap.Tab), key.Matches(msg, m.keymap.Down):
-		if currentIndexInMap != -1 {
-			nextIndexInMap := (currentIndexInMap + 1) % len(focusMap)
-			m.formFocusIndex = focusMap[nextIndexInMap]
-			m.formError = nil // Clear error on navigation
-		}
+		nextIndexInMap := (currentIndexInMap + 1) % len(focusMap)
+		m.formFocusIndex = focusMap[nextIndexInMap]
+		navigated = true
 	case key.Matches(msg, m.keymap.ShiftTab), key.Matches(msg, m.keymap.Up):
-		if currentIndexInMap != -1 {
-			nextIndexInMap := (currentIndexInMap - 1 + len(focusMap)) % len(focusMap)
-			m.formFocusIndex = focusMap[nextIndexInMap]
-			m.formError = nil // Clear error on navigation
-		}
-	case key.Matches(msg, m.keymap.Left), key.Matches(msg, m.keymap.Right):
-		// Handle auth method switching only when the selector is focused
-		if m.formFocusIndex == authMethodFocusIndex {
-			if key.Matches(msg, m.keymap.Left) {
-				m.formAuthMethod--
-				if m.formAuthMethod < authMethodKey {
-					m.formAuthMethod = authMethodPassword // Wrap around
-				}
-			} else { // Right key
-				m.formAuthMethod++
-				if m.formAuthMethod > authMethodPassword {
-					m.formAuthMethod = authMethodKey // Wrap around
-				}
-			}
-			m.formError = nil // Clear error when changing auth method
-		}
-	case key.Matches(msg, m.keymap.Enter):
-		// Prevent submitting when focus is on the non-input Auth Method selector
-		if m.formFocusIndex == authMethodFocusIndex {
-			return cmds
-		}
-		// Attempt to build and save the host
-		m.formError = nil // Clear previous error
-		newHost, validationErr := m.buildHostFromForm()
-		if validationErr != nil {
-			m.formError = validationErr
-		} else {
-			// Validation passed, attempt to save
-			cmds = append(cmds, saveNewSshHostCmd(newHost))
-		}
+		nextIndexInMap := (currentIndexInMap - 1 + len(focusMap)) % len(focusMap)
+		m.formFocusIndex = focusMap[nextIndexInMap]
+		navigated = true
 	}
 
-	// --- Update Input Focus Styles ---
-	// Blur all inputs first
-	for i := range m.formInputs {
-		m.formInputs[i].Blur()
-		m.formInputs[i].Prompt = "  " // Reset prompt
-		m.formInputs[i].TextStyle = lipgloss.NewStyle()
+	if navigated {
+		m.formError = nil // Clear error on navigation
 	}
-
-	// Determine the actual textinput.Model index to focus
-	focusedInputIndex := -1
-	switch m.formFocusIndex {
-	case nameFocusIndex, hostnameFocusIndex, userFocusIndex, portFocusIndex, remoteRootFocusIndex:
-		focusedInputIndex = m.formFocusIndex // Direct mapping for these
-	case keyPathFocusIndex:
-		if m.formAuthMethod == authMethodKey {
-			focusedInputIndex = 5 // Actual index for KeyPath input
-		}
-	case passwordFocusIndex:
-		if m.formAuthMethod == authMethodPassword {
-			focusedInputIndex = 6 // Actual index for Password input
-		}
-	}
-
-	// Apply focus style to the correct input if one should be focused
-	if focusedInputIndex != -1 {
-		cmds = append(cmds, m.formInputs[focusedInputIndex].Focus())
-		m.formInputs[focusedInputIndex].Prompt = cursorStyle.Render("> ")
-		m.formInputs[focusedInputIndex].TextStyle = cursorStyle
-	}
-	// If focus is on the authMethod selector (m.formFocusIndex == authMethodFocusIndex),
-	// no text input gets focus styling, but the selector itself will be styled in View().
-
-	return cmds
+	return navigated
 }
 
-func (m *model) handleSshEditFormKeys(msg tea.KeyMsg) []tea.Cmd {
-	var cmds []tea.Cmd
+// updateFormFocusStyles applies focus styling to the correct input field based on logical focus index.
+// Returns the tea.Cmd needed to actually focus the text input.
+func (m *model) updateFormFocusStyles() tea.Cmd {
+	var focusCmd tea.Cmd
 
-	// Define logical focus indices for the Edit form
+	// Define logical focus indices (constants could be defined globally if preferred)
 	const (
 		nameFocusIndex           = 0
 		hostnameFocusIndex       = 1
@@ -265,10 +188,179 @@ func (m *model) handleSshEditFormKeys(msg tea.KeyMsg) []tea.Cmd {
 		authMethodFocusIndex     = 5 // The selector itself
 		keyPathFocusIndex        = 6 // Logical index for key path input
 		passwordFocusIndex       = 7 // Logical index for password input
-		disabledToggleFocusIndex = 8 // Logical index for the disabled toggle
+		disabledToggleFocusIndex = 8 // Logical index for the disabled toggle (Edit form)
 	)
 
-	// Build the map of currently navigable logical indices based on auth method
+	// Map logical focus index to actual m.formInputs index
+	// This needs to know the current state to determine the correct mapping
+	focusedInputIndex := -1 // Index within m.formInputs
+	switch m.currentState {
+	case stateSshConfigAddForm, stateSshConfigEditForm:
+		switch m.formFocusIndex {
+		case nameFocusIndex, hostnameFocusIndex, userFocusIndex, portFocusIndex, remoteRootFocusIndex:
+			focusedInputIndex = m.formFocusIndex // Direct mapping for 0-4
+		case keyPathFocusIndex:
+			if m.formAuthMethod == authMethodKey {
+				focusedInputIndex = 5 // Actual index for KeyPath input
+			}
+		case passwordFocusIndex:
+			if m.formAuthMethod == authMethodPassword {
+				focusedInputIndex = 6 // Actual index for Password input
+			}
+			// No input focus for authMethodFocusIndex or disabledToggleFocusIndex
+		}
+	case stateSshConfigImportDetails:
+		const (
+			impRemoteRootFocusIndex    = 0
+			impAuthMethodFocusIndex    = 1
+			impKeyOrPasswordFocusIndex = 2
+		)
+		switch m.formFocusIndex {
+		case impRemoteRootFocusIndex:
+			focusedInputIndex = 4 // Actual index for Remote Root
+		case impKeyOrPasswordFocusIndex:
+			switch m.formAuthMethod {
+			case authMethodKey:
+				focusedInputIndex = 5 // Actual index for Key Path
+			case authMethodPassword:
+				focusedInputIndex = 6 // Actual index for Password
+			}
+		}
+	}
+
+	// Blur all inputs first
+	for i := range m.formInputs {
+		if m.formInputs[i].Focused() { // Only blur if actually focused
+			m.formInputs[i].Blur()
+		}
+		m.formInputs[i].Prompt = "  " // Reset prompt
+		m.formInputs[i].TextStyle = lipgloss.NewStyle()
+	}
+
+	// Apply focus style to the correct input if one should be focused
+	if focusedInputIndex != -1 && focusedInputIndex < len(m.formInputs) {
+		focusCmd = m.formInputs[focusedInputIndex].Focus()
+		m.formInputs[focusedInputIndex].Prompt = cursorStyle.Render("> ")
+		m.formInputs[focusedInputIndex].TextStyle = cursorStyle
+	}
+	// If focus is on a non-input element (auth selector, disabled toggle),
+	// no text input gets focus styling, but the element itself will be styled in View().
+
+	return focusCmd
+}
+
+// handleSubmitAddForm validates and attempts to save a new SSH host.
+func (m *model) handleSubmitAddForm() tea.Cmd {
+	// Prevent submitting when focus is on the non-input Auth Method selector
+	if m.formFocusIndex == 5 { // 5 is authMethodFocusIndex for Add form
+		return nil
+	}
+	m.formError = nil // Clear previous error
+	newHost, validationErr := m.buildHostFromForm()
+	if validationErr != nil {
+		m.formError = validationErr
+		return nil
+	}
+	// Validation passed, attempt to save
+	return saveNewSshHostCmd(newHost)
+}
+
+func (m *model) handleSshAddFormKeys(msg tea.KeyMsg) []tea.Cmd {
+	var cmds []tea.Cmd
+
+	// Define logical focus indices and build navigable map
+	const (
+		nameFocusIndex       = 0
+		hostnameFocusIndex   = 1
+		userFocusIndex       = 2
+		portFocusIndex       = 3
+		remoteRootFocusIndex = 4
+		authMethodFocusIndex = 5
+		keyPathFocusIndex    = 6
+		passwordFocusIndex   = 7
+	)
+	focusMap := []int{nameFocusIndex, hostnameFocusIndex, userFocusIndex, portFocusIndex, remoteRootFocusIndex, authMethodFocusIndex}
+	switch m.formAuthMethod {
+	case authMethodKey:
+		focusMap = append(focusMap, keyPathFocusIndex)
+	case authMethodPassword:
+		focusMap = append(focusMap, passwordFocusIndex)
+	}
+
+	// Handle navigation first
+	navigated := m.handleFormNavigation(msg, focusMap)
+
+	// Handle other keys if navigation didn't occur
+	if !navigated {
+		switch {
+		case key.Matches(msg, m.keymap.Left), key.Matches(msg, m.keymap.Right):
+			// Handle auth method switching only when the selector is focused
+			if m.formFocusIndex == authMethodFocusIndex {
+				if key.Matches(msg, m.keymap.Left) {
+					m.formAuthMethod--
+					if m.formAuthMethod < authMethodKey {
+						m.formAuthMethod = authMethodPassword // Wrap around
+					}
+				} else { // Right key
+					m.formAuthMethod++
+					if m.formAuthMethod > authMethodPassword {
+						m.formAuthMethod = authMethodKey // Wrap around
+					}
+				}
+				m.formError = nil // Clear error when changing auth method
+			}
+		case key.Matches(msg, m.keymap.Enter):
+			cmds = append(cmds, m.handleSubmitAddForm())
+		}
+	}
+
+	// Update focus styles after handling keys
+	cmds = append(cmds, m.updateFormFocusStyles())
+
+	return cmds
+}
+
+// handleSubmitEditForm validates and attempts to save an edited SSH host.
+func (m *model) handleSubmitEditForm() tea.Cmd {
+	// Define logical focus indices (constants could be defined globally if preferred)
+	const (
+		authMethodFocusIndex     = 5
+		disabledToggleFocusIndex = 8
+	)
+	// Prevent submitting when focus is on non-input selectors
+	if m.formFocusIndex == authMethodFocusIndex || m.formFocusIndex == disabledToggleFocusIndex {
+		return nil
+	}
+
+	m.formError = nil // Clear previous error
+	if m.hostToEdit == nil {
+		m.formError = fmt.Errorf("internal error: no host selected for editing")
+		return nil
+	}
+	editedHost, validationErr := m.buildHostFromEditForm()
+	if validationErr != nil {
+		m.formError = validationErr
+		return nil
+	}
+	// Validation passed, attempt to save
+	return saveEditedSshHostCmd(m.hostToEdit.Name, editedHost)
+}
+
+func (m *model) handleSshEditFormKeys(msg tea.KeyMsg) []tea.Cmd {
+	var cmds []tea.Cmd
+
+	// Define logical focus indices and build navigable map
+	const (
+		nameFocusIndex           = 0
+		hostnameFocusIndex       = 1
+		userFocusIndex           = 2
+		portFocusIndex           = 3
+		remoteRootFocusIndex     = 4
+		authMethodFocusIndex     = 5
+		keyPathFocusIndex        = 6
+		passwordFocusIndex       = 7
+		disabledToggleFocusIndex = 8
+	)
 	focusMap := []int{nameFocusIndex, hostnameFocusIndex, userFocusIndex, portFocusIndex, remoteRootFocusIndex, authMethodFocusIndex}
 	switch m.formAuthMethod {
 	case authMethodKey:
@@ -278,281 +370,173 @@ func (m *model) handleSshEditFormKeys(msg tea.KeyMsg) []tea.Cmd {
 	}
 	focusMap = append(focusMap, disabledToggleFocusIndex) // Always add the disabled toggle
 
-	// Find the current position in the focus map
-	currentIndexInMap := -1
-	for i, logicalIndex := range focusMap {
-		if logicalIndex == m.formFocusIndex {
-			currentIndexInMap = i
-			break
-		}
-	}
+	// Handle navigation first
+	navigated := m.handleFormNavigation(msg, focusMap)
 
-	switch {
-	case key.Matches(msg, m.keymap.Tab), key.Matches(msg, m.keymap.Down):
-		if currentIndexInMap != -1 {
-			nextIndexInMap := (currentIndexInMap + 1) % len(focusMap)
-			m.formFocusIndex = focusMap[nextIndexInMap]
-			m.formError = nil // Clear error on navigation
-		}
-	case key.Matches(msg, m.keymap.ShiftTab), key.Matches(msg, m.keymap.Up):
-		if currentIndexInMap != -1 {
-			nextIndexInMap := (currentIndexInMap - 1 + len(focusMap)) % len(focusMap)
-			m.formFocusIndex = focusMap[nextIndexInMap]
-			m.formError = nil // Clear error on navigation
-		}
-	case key.Matches(msg, m.keymap.ToggleDisabled): // Spacebar
-		// Toggle disabled status only when the toggle itself is focused
-		if m.formFocusIndex == disabledToggleFocusIndex {
-			m.formDisabled = !m.formDisabled
-		}
-	case key.Matches(msg, m.keymap.Left), key.Matches(msg, m.keymap.Right):
-		// Handle auth method switching only when the selector is focused
-		if m.formFocusIndex == authMethodFocusIndex {
-			if key.Matches(msg, m.keymap.Left) {
-				m.formAuthMethod--
-				if m.formAuthMethod < authMethodKey {
-					m.formAuthMethod = authMethodPassword // Wrap around
-				}
-			} else { // Right key
-				m.formAuthMethod++
-				if m.formAuthMethod > authMethodPassword {
-					m.formAuthMethod = authMethodKey // Wrap around
-				}
+	// Handle other keys if navigation didn't occur
+	if !navigated {
+		switch {
+		case key.Matches(msg, m.keymap.ToggleDisabled): // Spacebar
+			// Toggle disabled status only when the toggle itself is focused
+			if m.formFocusIndex == disabledToggleFocusIndex {
+				m.formDisabled = !m.formDisabled
 			}
-			m.formError = nil // Clear error when changing auth method
-		}
-	case key.Matches(msg, m.keymap.Enter):
-		// Prevent submitting when focus is on non-input selectors
-		if m.formFocusIndex == authMethodFocusIndex || m.formFocusIndex == disabledToggleFocusIndex {
-			return cmds
-		}
-		// Attempt to build and save the edited host
-		m.formError = nil // Clear previous error
-		if m.hostToEdit == nil {
-			m.formError = fmt.Errorf("internal error: no host selected for editing")
-			return cmds
-		}
-		editedHost, validationErr := m.buildHostFromEditForm()
-		if validationErr != nil {
-			m.formError = validationErr
-		} else {
-			// Validation passed, attempt to save
-			cmds = append(cmds, saveEditedSshHostCmd(m.hostToEdit.Name, editedHost))
+		case key.Matches(msg, m.keymap.Left), key.Matches(msg, m.keymap.Right):
+			// Handle auth method switching only when the selector is focused
+			if m.formFocusIndex == authMethodFocusIndex {
+				if key.Matches(msg, m.keymap.Left) {
+					m.formAuthMethod--
+					if m.formAuthMethod < authMethodKey {
+						m.formAuthMethod = authMethodPassword // Wrap around
+					}
+				} else { // Right key
+					m.formAuthMethod++
+					if m.formAuthMethod > authMethodPassword {
+						m.formAuthMethod = authMethodKey // Wrap around
+					}
+				}
+				m.formError = nil // Clear error when changing auth method
+			}
+		case key.Matches(msg, m.keymap.Enter):
+			cmds = append(cmds, m.handleSubmitEditForm())
 		}
 	}
 
-	// --- Update Input Focus Styles ---
-	// Blur all inputs first
-	for i := range m.formInputs {
-		m.formInputs[i].Blur()
-		m.formInputs[i].Prompt = "  " // Reset prompt
-		m.formInputs[i].TextStyle = lipgloss.NewStyle()
-	}
-
-	// Determine the actual textinput.Model index to focus
-	focusedInputIndex := -1
-	switch m.formFocusIndex {
-	case nameFocusIndex, hostnameFocusIndex, userFocusIndex, portFocusIndex, remoteRootFocusIndex:
-		focusedInputIndex = m.formFocusIndex // Direct mapping
-	case keyPathFocusIndex:
-		if m.formAuthMethod == authMethodKey {
-			focusedInputIndex = 5 // Actual index for KeyPath input
-		}
-	case passwordFocusIndex:
-		if m.formAuthMethod == authMethodPassword {
-			focusedInputIndex = 6 // Actual index for Password input
-		}
-		// No input focus for authMethodFocusIndex or disabledToggleFocusIndex
-	}
-
-	// Apply focus style to the correct input if one should be focused
-	if focusedInputIndex != -1 {
-		cmds = append(cmds, m.formInputs[focusedInputIndex].Focus())
-		m.formInputs[focusedInputIndex].Prompt = cursorStyle.Render("> ")
-		m.formInputs[focusedInputIndex].TextStyle = cursorStyle
-	}
-	// If focus is on the authMethod selector or disabled toggle,
-	// no text input gets focus styling, but the elements themselves will be styled in View().
+	// Update focus styles after handling keys
+	cmds = append(cmds, m.updateFormFocusStyles())
 
 	return cmds
+}
+
+// handleSubmitImportDetailsForm processes the details for the currently configuring host,
+// moves to the next host, or triggers the final save.
+func (m *model) handleSubmitImportDetailsForm() tea.Cmd {
+	// Define logical focus indices
+	const (
+		remoteRootFocusIndex = 0
+		authMethodFocusIndex = 1
+	)
+	// Prevent submitting when focus is on the non-input Auth Method selector
+	if m.formFocusIndex == authMethodFocusIndex {
+		return nil
+	}
+
+	m.formError = nil // Clear previous error
+
+	if m.configuringHostIdx < 0 || m.configuringHostIdx >= len(m.importableHosts) {
+		m.formError = fmt.Errorf("internal error: invalid host index for import details")
+		return nil
+	}
+	currentPotentialHost := m.importableHosts[m.configuringHostIdx]
+
+	// Extract values from the relevant form inputs
+	remoteRoot := strings.TrimSpace(m.formInputs[4].Value()) // Index 4 is Remote Root
+	keyPath := strings.TrimSpace(m.formInputs[5].Value())    // Index 5 is Key Path
+	password := m.formInputs[6].Value()                      // Index 6 is Password
+
+	// Convert potential host to our config format
+	hostToSave, convertErr := config.ConvertToBucketManagerHost(currentPotentialHost, currentPotentialHost.Alias, remoteRoot)
+	if convertErr != nil {
+		m.formError = fmt.Errorf("internal conversion error: %w", convertErr)
+		return nil
+	}
+
+	// Always apply auth details based on the form selection, overriding ssh_config if needed.
+	switch m.formAuthMethod {
+	case authMethodKey:
+		if keyPath == "" {
+			m.formError = fmt.Errorf("key path is required for Key File authentication")
+			return nil
+		}
+		hostToSave.KeyPath = keyPath
+		hostToSave.Password = "" // Ensure password is clear
+	case authMethodPassword:
+		if password == "" {
+			m.formError = fmt.Errorf("password is required for Password authentication")
+			return nil
+		}
+		hostToSave.Password = password
+		hostToSave.KeyPath = "" // Ensure key path is clear
+	case authMethodAgent:
+		// Agent selected, ensure both are clear, overriding any ssh_config key path
+		hostToSave.KeyPath = ""
+		hostToSave.Password = ""
+	}
+
+	// Add the configured host to the list to be saved
+	m.hostsToConfigure = append(m.hostsToConfigure, hostToSave)
+
+	// --- Move to the next selected host or finish ---
+	nextSelectedIdx := -1
+	// Start searching from the index *after* the current one
+	for i := m.configuringHostIdx + 1; i < len(m.importableHosts); i++ {
+		if _, ok := m.selectedImportIdxs[i]; ok {
+			nextSelectedIdx = i
+			break // Found the next one
+		}
+	}
+
+	if nextSelectedIdx != -1 {
+		// Move to the next host: update index, create new form, reset focus
+		m.configuringHostIdx = nextSelectedIdx
+		pHostToConfigure := m.importableHosts[m.configuringHostIdx]
+		m.formInputs, m.formAuthMethod = createImportDetailsForm(pHostToConfigure)
+		m.formFocusIndex = remoteRootFocusIndex // Reset focus to the first field (Remote Root)
+		m.formError = nil
+		m.formViewport.GotoTop() // Scroll form viewport to top for the new host
+		// Return command to focus the first input of the new form
+		return m.updateFormFocusStyles()
+	}
+
+	// No more selected hosts left, trigger the save command
+	return saveImportedSshHostsCmd(m.hostsToConfigure)
+	// State change will happen upon receiving sshHostsImportedMsg
 }
 
 func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 	var cmds []tea.Cmd
 
-	// Define logical focus indices for the Import Details form
+	// Define logical focus indices and build navigable map
 	const (
-		remoteRootFocusIndex    = 0 // Logical index for Remote Root input
-		authMethodFocusIndex    = 1 // Logical index for Auth Method selector
-		keyOrPasswordFocusIndex = 2 // Logical index for Key Path OR Password input
+		remoteRootFocusIndex    = 0
+		authMethodFocusIndex    = 1
+		keyOrPasswordFocusIndex = 2
 	)
-
-	// Build the map of currently navigable logical indices
-	// Remote Root and Auth Method are always present. Key/Password depends on selection.
 	focusMap := []int{remoteRootFocusIndex, authMethodFocusIndex}
 	switch m.formAuthMethod {
-	case authMethodKey, authMethodPassword: // Key Path or Password input is navigable
+	case authMethodKey, authMethodPassword:
 		focusMap = append(focusMap, keyOrPasswordFocusIndex)
-	case authMethodAgent: // Agent has no specific input field after the selector
-		// No input field to add
 	}
 
-	// Find the current position in the focus map
-	currentIndexInMap := -1
-	for i, logicalIndex := range focusMap {
-		if logicalIndex == m.formFocusIndex {
-			currentIndexInMap = i
-			break
-		}
-	}
+	// Handle navigation first
+	navigated := m.handleFormNavigation(msg, focusMap)
 
-	switch {
-	case key.Matches(msg, m.keymap.Tab), key.Matches(msg, m.keymap.Down):
-		if currentIndexInMap != -1 {
-			nextIndexInMap := (currentIndexInMap + 1) % len(focusMap)
-			m.formFocusIndex = focusMap[nextIndexInMap]
-			m.formError = nil // Clear error on navigation
-		}
-	case key.Matches(msg, m.keymap.ShiftTab), key.Matches(msg, m.keymap.Up):
-		if currentIndexInMap != -1 {
-			nextIndexInMap := (currentIndexInMap - 1 + len(focusMap)) % len(focusMap)
-			m.formFocusIndex = focusMap[nextIndexInMap]
-			m.formError = nil // Clear error on navigation
-		}
-	case key.Matches(msg, m.keymap.Left), key.Matches(msg, m.keymap.Right):
-		// Handle auth method switching only when the selector is focused
-		if m.formFocusIndex == authMethodFocusIndex {
-			if key.Matches(msg, m.keymap.Left) {
-				m.formAuthMethod--
-				if m.formAuthMethod < authMethodKey {
-					m.formAuthMethod = authMethodPassword // Wrap around
+	// Handle other keys if navigation didn't occur
+	if !navigated {
+		switch {
+		case key.Matches(msg, m.keymap.Left), key.Matches(msg, m.keymap.Right):
+			// Handle auth method switching only when the selector is focused
+			if m.formFocusIndex == authMethodFocusIndex {
+				if key.Matches(msg, m.keymap.Left) {
+					m.formAuthMethod--
+					if m.formAuthMethod < authMethodKey {
+						m.formAuthMethod = authMethodPassword // Wrap around
+					}
+				} else { // Right key
+					m.formAuthMethod++
+					if m.formAuthMethod > authMethodPassword {
+						m.formAuthMethod = authMethodKey // Wrap around
+					}
 				}
-			} else { // Right key
-				m.formAuthMethod++
-				if m.formAuthMethod > authMethodPassword {
-					m.formAuthMethod = authMethodKey // Wrap around
-				}
+				m.formError = nil // Clear error when changing auth method
 			}
-			m.formError = nil // Clear error when changing auth method
-		}
-
-	case key.Matches(msg, m.keymap.Enter):
-		// Prevent submitting when focus is on the non-input Auth Method selector
-		if m.formFocusIndex == authMethodFocusIndex {
-			return cmds
-		}
-
-		// --- Process the current host's details ---
-		m.formError = nil // Clear previous error
-
-		if m.configuringHostIdx < 0 || m.configuringHostIdx >= len(m.importableHosts) {
-			m.formError = fmt.Errorf("internal error: invalid host index for import details")
-			return cmds
-		}
-		currentPotentialHost := m.importableHosts[m.configuringHostIdx]
-
-		// Extract values from the relevant form inputs
-		remoteRoot := strings.TrimSpace(m.formInputs[4].Value()) // Index 4 is Remote Root
-		keyPath := strings.TrimSpace(m.formInputs[5].Value())    // Index 5 is Key Path
-		password := m.formInputs[6].Value()                      // Index 6 is Password
-
-		// Convert potential host to our config format
-		hostToSave, convertErr := config.ConvertToBucketManagerHost(currentPotentialHost, currentPotentialHost.Alias, remoteRoot)
-		if convertErr != nil {
-			m.formError = fmt.Errorf("internal conversion error: %w", convertErr)
-			return cmds
-		}
-
-		// Always apply auth details based on the form selection, overriding ssh_config if needed.
-		switch m.formAuthMethod {
-		case authMethodKey:
-			if keyPath == "" {
-				m.formError = fmt.Errorf("key path is required for Key File authentication")
-				return cmds
-			}
-			hostToSave.KeyPath = keyPath
-			hostToSave.Password = "" // Ensure password is clear
-		case authMethodPassword:
-			if password == "" {
-				m.formError = fmt.Errorf("password is required for Password authentication")
-				return cmds
-			}
-			hostToSave.Password = password
-			hostToSave.KeyPath = "" // Ensure key path is clear
-		case authMethodAgent:
-			// Agent selected, ensure both are clear, overriding any ssh_config key path
-			hostToSave.KeyPath = ""
-			hostToSave.Password = ""
-		}
-
-		// Add the configured host to the list to be saved
-		m.hostsToConfigure = append(m.hostsToConfigure, hostToSave)
-
-		// --- Move to the next selected host or finish ---
-		nextSelectedIdx := -1
-		// Start searching from the index *after* the current one
-		for i := m.configuringHostIdx + 1; i < len(m.importableHosts); i++ {
-			if _, ok := m.selectedImportIdxs[i]; ok {
-				nextSelectedIdx = i
-				break // Found the next one
-			}
-		}
-
-		if nextSelectedIdx != -1 {
-			// Move to the next host: update index, create new form, reset focus
-			m.configuringHostIdx = nextSelectedIdx
-			pHostToConfigure := m.importableHosts[m.configuringHostIdx]
-			m.formInputs, m.formAuthMethod = createImportDetailsForm(pHostToConfigure)
-			m.formFocusIndex = remoteRootFocusIndex // Reset focus to the first field (Remote Root)
-			m.formError = nil
-			m.formViewport.GotoTop() // Scroll form viewport to top for the new host
-		} else {
-			// No more selected hosts left, trigger the save command
-			cmds = append(cmds, saveImportedSshHostsCmd(m.hostsToConfigure))
-			// State change will happen upon receiving sshHostsImportedMsg
+		case key.Matches(msg, m.keymap.Enter):
+			cmds = append(cmds, m.handleSubmitImportDetailsForm())
 		}
 	}
 
-	// --- Update Input Focus Styles ---
-	// Define actual indices in m.formInputs
-	remoteRootInputIdx := 4
-	keyPathInputIdx := 5
-	passwordInputIdx := 6
-
-	// Blur all potentially focusable inputs first
-	m.formInputs[remoteRootInputIdx].Blur()
-	m.formInputs[keyPathInputIdx].Blur()
-	m.formInputs[passwordInputIdx].Blur()
-	m.formInputs[remoteRootInputIdx].Prompt = "  "
-	m.formInputs[keyPathInputIdx].Prompt = "  "
-	m.formInputs[passwordInputIdx].Prompt = "  "
-	m.formInputs[remoteRootInputIdx].TextStyle = lipgloss.NewStyle()
-	m.formInputs[keyPathInputIdx].TextStyle = lipgloss.NewStyle()
-	m.formInputs[passwordInputIdx].TextStyle = lipgloss.NewStyle()
-
-	// Apply focus based on the logical formFocusIndex
-	focusedInputIndex := -1
-	switch m.formFocusIndex {
-	case remoteRootFocusIndex:
-		focusedInputIndex = remoteRootInputIdx
-	case keyOrPasswordFocusIndex:
-		// Focus Key Path or Password input based on selected auth method
-		switch m.formAuthMethod {
-		case authMethodKey:
-			focusedInputIndex = keyPathInputIdx
-		case authMethodPassword:
-			focusedInputIndex = passwordInputIdx
-			// No input to focus for authMethodAgent
-		}
-		// No input focus for authMethodFocusIndex
-	}
-
-	// Apply focus style if an input should be focused
-	if focusedInputIndex != -1 {
-		cmds = append(cmds, m.formInputs[focusedInputIndex].Focus())
-		m.formInputs[focusedInputIndex].Prompt = cursorStyle.Render("> ")
-		m.formInputs[focusedInputIndex].TextStyle = cursorStyle
-	}
+	// Update focus styles after handling keys
+	cmds = append(cmds, m.updateFormFocusStyles())
 
 	return cmds
 }
