@@ -130,6 +130,29 @@ func (m *model) Init() tea.Cmd {
 	return findStacksCmd()
 }
 
+// refreshFormInputStyles updates prompts, text styles, and blurs form inputs.
+// It styles the input at 'focusedIdx' as active and others as inactive.
+// 'checkPlaceholder' (optional) returns true if an input at a given index
+// is a placeholder and should not have its style reset (its style is preserved).
+func (m *model) refreshFormInputStyles(focusedIdx int, checkPlaceholder func(idx int) bool) {
+	for i := range m.formInputs {
+		if i == focusedIdx {
+			m.formInputs[i].Prompt = cursorStyle.Render("> ")
+			m.formInputs[i].TextStyle = cursorStyle
+		} else {
+			m.formInputs[i].Prompt = "  " // Common for unfocused and placeholders
+			isPlaceholder := false
+			if checkPlaceholder != nil {
+				isPlaceholder = checkPlaceholder(i)
+			}
+
+			if !isPlaceholder {
+				m.formInputs[i].TextStyle = lipgloss.NewStyle() // Reset style only if not placeholder
+			}
+			m.formInputs[i].Blur() // Blur all non-focused inputs (placeholders included)
+		}
+	}
+}
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	var vpCmd tea.Cmd
@@ -224,10 +247,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.formError = nil
 				m.currentState = stateSshConfigAddForm
 				m.formViewport.GotoTop()
-				if len(m.formInputs) > 0 {
-					m.formInputs[0].Prompt = cursorStyle.Render("> ")
-					m.formInputs[0].TextStyle = cursorStyle
-					cmds = append(cmds, m.formInputs[0].Focus())
+				// m.formFocusIndex is already 0, which is the first input
+				m.refreshFormInputStyles(m.formFocusIndex, nil)
+				if len(m.formInputs) > m.formFocusIndex && m.formFocusIndex >= 0 { // Ensure input exists
+					cmds = append(cmds, m.formInputs[m.formFocusIndex].Focus())
 				}
 			case key.Matches(msg, m.keymap.Import):
 				m.currentState = stateLoadingStacks // Show loading while parsing
@@ -243,10 +266,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.formError = nil
 					m.currentState = stateSshConfigEditForm
 					m.formViewport.GotoTop()
-					if len(m.formInputs) > 0 {
-						m.formInputs[0].Prompt = cursorStyle.Render("> ")
-						m.formInputs[0].TextStyle = cursorStyle
-						cmds = append(cmds, m.formInputs[0].Focus())
+					// m.formFocusIndex is already 0, which is the first input
+					m.refreshFormInputStyles(m.formFocusIndex, nil)
+					if len(m.formInputs) > m.formFocusIndex && m.formFocusIndex >= 0 { // Ensure input exists
+						cmds = append(cmds, m.formInputs[m.formFocusIndex].Focus())
 					}
 				} else {
 					m.lastError = fmt.Errorf("cannot edit 'local' host")
@@ -382,11 +405,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.formInputs, m.formAuthMethod = createImportDetailsForm(pHostToConfigure)
 						m.formFocusIndex = 0
 						m.formError = nil
-						// Apply initial focus style for import details (index 4 is Remote Root)
-						if len(m.formInputs) > 4 {
-							m.formInputs[4].Prompt = cursorStyle.Render("> ")
-							m.formInputs[4].TextStyle = cursorStyle
-							cmds = append(cmds, m.formInputs[4].Focus())
+						// m.formFocusIndex is 0 (logical for Remote Root). Actual input index is 4.
+						actualFocusedInputIndex := 4 // Remote Root Path is input at index 4
+						m.refreshFormInputStyles(actualFocusedInputIndex, func(idx int) bool {
+							return idx < 4 // Inputs 0-3 are placeholders
+						})
+						if len(m.formInputs) > actualFocusedInputIndex {
+							cmds = append(cmds, m.formInputs[actualFocusedInputIndex].Focus())
 						}
 					} else {
 						m.importError = fmt.Errorf("internal error: no selected host index found")
