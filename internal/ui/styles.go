@@ -19,4 +19,7 @@ var (
 	statusLoadingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	serverNameStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Italic(true)
 	identifierColor    = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	mainContentBorderStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder(), true).
+				BorderForeground(lipgloss.Color("238")) // Light grey border
 )

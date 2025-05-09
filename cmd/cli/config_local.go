@@ -77,7 +77,6 @@ var configGetLocalRootCmd = &cobra.Command{
 			fmt.Printf("Default search paths: %s, %s\n", identifierColor.Sprint("~/bucket"), identifierColor.Sprint("~/compose-bucket"))
 		}
 
-		// Report the path that discovery will actually use
 		activePath, activeErr := discovery.GetComposeRootDirectory()
 		if activeErr == nil {
 			// Determine if the active path came from config or default

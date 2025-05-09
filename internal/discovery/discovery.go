@@ -207,16 +207,12 @@ func FindLocalStacks(rootDir string) ([]Stack, error) {
 				// AbsoluteRemoteRoot is empty for local stacks
 			})
 		} else if !os.IsNotExist(errYaml) || !os.IsNotExist(errYml) {
-			// Report error only if it's not ErrNotExist for *both* files
-			// If one exists, we don't care about errors on the other.
-			// If neither exists, report the error from the first check (yaml) if it wasn't NotExist.
 			if !os.IsNotExist(errYaml) {
 				logger.Errorf("Warning: could not stat compose files in local stack %s: %v", stackPath, errYaml)
 			} else if !os.IsNotExist(errYml) {
 				// If yaml was NotExist, but yml had a different error, report that.
 				logger.Errorf("Warning: could not stat compose files in local stack %s: %v", stackPath, errYml)
 			}
-			// If both were os.IsNotExist, we simply skip the directory.
 		}
 	}
 

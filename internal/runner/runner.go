@@ -108,7 +108,6 @@ func streamPipe(pipe io.Reader, outChan chan<- OutputLine, doneChan chan<- struc
 		}
 		if err != nil {
 			if err != io.EOF {
-				// Log or handle read errors if necessary, this print might be noisy for TUI
 				fmt.Fprintf(os.Stderr, "Pipe read error (%v): %v\n", isError, err)
 			}
 			break

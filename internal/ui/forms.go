@@ -20,7 +20,7 @@ func createAddForm() []textinput.Model {
 
 	t = textinput.New()
 	t.Placeholder = "Unique Name (e.g., server1)"
-	t.Focus() // Initial focus
+	t.Focus()
 	t.CharLimit = 50
 	t.Width = 40
 	inputs[0] = t
@@ -77,7 +77,7 @@ func createAddForm() []textinput.Model {
 }
 
 func createEditForm(host config.SSHHost) ([]textinput.Model, int, bool) {
-	inputs := make([]textinput.Model, 7) // Same fields as add form
+	inputs := make([]textinput.Model, 7)
 	var t textinput.Model
 	initialAuthMethod := authMethodAgent // Default to agent if no specific method found
 	if host.KeyPath != "" {
@@ -89,7 +89,7 @@ func createEditForm(host config.SSHHost) ([]textinput.Model, int, bool) {
 	t = textinput.New()
 	t.Placeholder = "Unique Name"
 	t.SetValue(host.Name)
-	t.Focus() // Initial focus
+	t.Focus()
 	t.CharLimit = 50
 	t.Width = 40
 	inputs[0] = t
@@ -163,7 +163,7 @@ func createImportDetailsForm(pHost config.PotentialHost) ([]textinput.Model, int
 
 	t = textinput.New()
 	t.Placeholder = "Remote Root Path (optional, defaults: ~/bucket or ~/compose-bucket)"
-	t.Focus() // Initial focus for this form
+	t.Focus()
 	t.CharLimit = 200
 	t.Width = 70
 	inputs[4] = t
@@ -188,7 +188,7 @@ func createImportDetailsForm(pHost config.PotentialHost) ([]textinput.Model, int
 
 	// Add placeholders for unused fields (0-3) to maintain array size consistency
 	for i := 0; i < 4; i++ {
-		inputs[i] = textinput.New() // Create empty inputs
+		inputs[i] = textinput.New()
 	}
 
 	return inputs, initialAuthMethod
@@ -274,17 +274,17 @@ func (m *model) buildHostFromEditForm() (config.SSHHost, error) {
 	// Get values, keeping original if the field is left empty (except for RemoteRoot and auth fields)
 	editedHost.Name = strings.TrimSpace(m.formInputs[0].Value())
 	if editedHost.Name == "" {
-		editedHost.Name = originalHost.Name // Keep original if empty
+		editedHost.Name = originalHost.Name
 	}
 
 	editedHost.Hostname = strings.TrimSpace(m.formInputs[1].Value())
 	if editedHost.Hostname == "" {
-		editedHost.Hostname = originalHost.Hostname // Keep original if empty
+		editedHost.Hostname = originalHost.Hostname
 	}
 
 	editedHost.User = strings.TrimSpace(m.formInputs[2].Value())
 	if editedHost.User == "" {
-		editedHost.User = originalHost.User // Keep original if empty
+		editedHost.User = originalHost.User
 	}
 
 	// Allow empty RemoteRoot to clear it

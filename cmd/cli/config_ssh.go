@@ -76,7 +76,6 @@ func promptForNewHostDetails(existingHosts []config.SSHHost) (config.SSHHost, er
 	var newHost config.SSHHost
 	var err error
 
-	// Prompt for Name and check for conflicts
 	newHost.Name, err = promptString("Unique Name (e.g., 'server1', 'kumo-prod'):", true)
 	if err != nil {
 		return newHost, fmt.Errorf("error reading name: %w", err)
@@ -87,19 +86,16 @@ func promptForNewHostDetails(existingHosts []config.SSHHost) (config.SSHHost, er
 		}
 	}
 
-	// Prompt for Hostname
 	newHost.Hostname, err = promptString("Hostname or IP Address:", true)
 	if err != nil {
 		return newHost, fmt.Errorf("error reading hostname: %w", err)
 	}
 
-	// Prompt for User
 	newHost.User, err = promptString("SSH Username:", true)
 	if err != nil {
 		return newHost, fmt.Errorf("error reading username: %w", err)
 	}
 
-	// Prompt for Port
 	newHost.Port, err = promptOptionalInt("SSH Port", 22)
 	if err != nil {
 		return newHost, fmt.Errorf("error reading port: %w", err)
@@ -108,20 +104,18 @@ func promptForNewHostDetails(existingHosts []config.SSHHost) (config.SSHHost, er
 		newHost.Port = 0 // Store 0 for default
 	}
 
-	// Prompt for Remote Root
 	prompt := "Remote Root Path (optional, defaults to ~/bucket or ~/compose-bucket):"
 	newHost.RemoteRoot, err = promptString(prompt, false)
 	if err != nil {
 		return newHost, fmt.Errorf("error reading remote root: %w", err)
 	}
 
-	// Prompt for Authentication Details
-	err = promptForAuthDetails(&newHost, false, "") // false for isEditing, empty original password
+	err = promptForAuthDetails(&newHost, false, "")
 	if err != nil {
 		return newHost, fmt.Errorf("error getting authentication details: %w", err)
 	}
 
-	newHost.Disabled = false // New hosts are enabled by default
+	newHost.Disabled = false
 	return newHost, nil
 }
 
@@ -143,7 +137,6 @@ var sshAddCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Append and save
 		cfg.SSHHosts = append(cfg.SSHHosts, newHost)
 		err = config.SaveConfig(cfg)
 		if err != nil {
@@ -162,15 +155,13 @@ func promptForEditedHostDetails(originalHost config.SSHHost, allHosts []config.S
 
 	fmt.Printf("\nEditing SSH host '%s'. Press Enter to keep the current value.\n", identifierColor.Sprint(originalHost.Name))
 
-	// Prompt for Name
 	editedHost.Name, err = promptString(fmt.Sprintf("Unique Name [%s]:", originalHost.Name), false)
 	if err != nil {
 		return editedHost, fmt.Errorf("error reading name: %w", err)
 	}
 	if editedHost.Name == "" {
-		editedHost.Name = originalHost.Name // Keep original if empty
+		editedHost.Name = originalHost.Name
 	} else if editedHost.Name != originalHost.Name {
-		// Check for conflicts only if name changed
 		for i, h := range allHosts {
 			if i != hostIndex && h.Name == editedHost.Name {
 				return editedHost, fmt.Errorf("SSH host with name '%s' already exists", editedHost.Name)
@@ -178,7 +169,6 @@ func promptForEditedHostDetails(originalHost config.SSHHost, allHosts []config.S
 		}
 	}
 
-	// Prompt for Hostname
 	editedHost.Hostname, err = promptString(fmt.Sprintf("Hostname or IP Address [%s]:", originalHost.Hostname), false)
 	if err != nil {
 		return editedHost, fmt.Errorf("error reading hostname: %w", err)
@@ -187,7 +177,6 @@ func promptForEditedHostDetails(originalHost config.SSHHost, allHosts []config.S
 		editedHost.Hostname = originalHost.Hostname
 	}
 
-	// Prompt for User
 	editedHost.User, err = promptString(fmt.Sprintf("SSH Username [%s]:", originalHost.User), false)
 	if err != nil {
 		return editedHost, fmt.Errorf("error reading username: %w", err)
@@ -196,10 +185,9 @@ func promptForEditedHostDetails(originalHost config.SSHHost, allHosts []config.S
 		editedHost.User = originalHost.User
 	}
 
-	// Prompt for Port
 	portDefault := originalHost.Port
 	if portDefault == 0 {
-		portDefault = 22 // Show 22 if original was 0/unset
+		portDefault = 22
 	}
 	editedHost.Port, err = promptOptionalInt(fmt.Sprintf("SSH Port [%d]", portDefault), portDefault)
 	if err != nil {
@@ -209,7 +197,6 @@ func promptForEditedHostDetails(originalHost config.SSHHost, allHosts []config.S
 		editedHost.Port = 0 // Store 0 if it's the default 22
 	}
 
-	// Prompt for Remote Root
 	remoteRootPrompt := "Remote Root Path (leave blank to use default: ~/bucket or ~/compose-bucket)"
 	currentRemoteRootDisplay := originalHost.RemoteRoot
 	if currentRemoteRootDisplay == "" {
@@ -221,13 +208,11 @@ func promptForEditedHostDetails(originalHost config.SSHHost, allHosts []config.S
 	}
 	// Note: promptString returns trimmed space, so empty input becomes "" which is desired for clearing RemoteRoot
 
-	// Prompt for Authentication Details
 	err = promptForAuthDetails(&editedHost, true, originalHost.Password)
 	if err != nil {
 		return editedHost, fmt.Errorf("error getting authentication details: %w", err)
 	}
 
-	// Prompt for Disabled status
 	disablePrompt := fmt.Sprintf("Disable this host? (Currently: %t) (y/N):", originalHost.Disabled)
 	disableChoice, err := promptConfirm(disablePrompt)
 	if err != nil {
@@ -253,7 +238,6 @@ var sshEditCmd = &cobra.Command{
 			return
 		}
 
-		// Select host to edit
 		fmt.Println("Select the SSH host to edit:")
 		for i, host := range cfg.SSHHosts {
 			fmt.Printf("  %d: %s\n", i+1, identifierColor.Sprint(host.Name))
@@ -271,14 +255,12 @@ var sshEditCmd = &cobra.Command{
 		hostIndex := choice - 1
 		originalHost := cfg.SSHHosts[hostIndex]
 
-		// Prompt for edits
 		editedHost, err := promptForEditedHostDetails(originalHost, cfg.SSHHosts, hostIndex)
 		if err != nil {
 			logger.Errorf("Failed to get updated host details: %v", err)
 			os.Exit(1)
 		}
 
-		// Update and save
 		cfg.SSHHosts[hostIndex] = editedHost
 		err = config.SaveConfig(cfg)
 		if err != nil {
@@ -358,12 +340,10 @@ func filterAndDisplayPotentialHosts(potentialHosts []config.PotentialHost, curre
 	}
 
 	for i, pHost := range potentialHosts {
-		// Check if a host with the same alias already exists in bm config
 		if _, exists := currentConfigNames[pHost.Alias]; exists {
 			fmt.Printf("  %d: %s (Alias: %s) - %s\n", i+1, identifierColor.Sprint(pHost.Alias), pHost.Hostname, errorColor.Sprint("[Skipped: Name already exists in bm config]"))
 			continue
 		}
-		// Display importable host details
 		fmt.Printf("  %d: %s (Hostname: %s, User: %s, Port: %d)\n", i+1, identifierColor.Sprint(pHost.Alias), pHost.Hostname, pHost.User, pHost.Port)
 		if pHost.KeyPath != "" {
 			fmt.Printf("     Key: %s\n", pHost.KeyPath)
@@ -378,7 +358,7 @@ func filterAndDisplayPotentialHosts(potentialHosts []config.PotentialHost, curre
 func promptForImportSelection(potentialHosts, importableHosts []config.PotentialHost) ([]config.PotentialHost, error) {
 	if len(importableHosts) == 0 {
 		fmt.Println("\nNo new hosts available to import.")
-		return nil, nil // Not an error, just nothing to select
+		return nil, nil
 	}
 
 	fmt.Println("\nEnter the numbers of the hosts you want to import (comma-separated), or 'all':")
@@ -396,16 +376,15 @@ func promptForImportSelection(potentialHosts, importableHosts []config.Potential
 
 		for _, indexStr := range indices {
 			index, err := strconv.Atoi(strings.TrimSpace(indexStr))
-			if err != nil || index < 1 || index > len(potentialHosts) { // Check against original list length for index validity
+			if err != nil || index < 1 || index > len(potentialHosts) {
 				return nil, fmt.Errorf("invalid selection '%s'. Please enter numbers corresponding to the list", indexStr)
 			}
 
-			// Find the corresponding host in the *importable* list
-			selectedPotentialHost := potentialHosts[index-1] // Get host from original list by index
+			selectedPotentialHost := potentialHosts[index-1]
 			foundInImportable := false
 			for _, ih := range importableHosts {
 				if ih.Alias == selectedPotentialHost.Alias {
-					if !selectedAliases[ih.Alias] { // Check if already selected by the user in this input
+					if !selectedAliases[ih.Alias] {
 						hostsToImport = append(hostsToImport, ih)
 						selectedAliases[ih.Alias] = true
 					}
@@ -414,7 +393,6 @@ func promptForImportSelection(potentialHosts, importableHosts []config.Potential
 				}
 			}
 			if !foundInImportable {
-				// This host was displayed but marked as skipped (e.g., name conflict)
 				return nil, fmt.Errorf("host '%s' (number %d) cannot be imported (e.g., name conflict)", selectedPotentialHost.Alias, index)
 			}
 		}
@@ -422,7 +400,7 @@ func promptForImportSelection(potentialHosts, importableHosts []config.Potential
 
 	if len(hostsToImport) == 0 {
 		fmt.Println("No hosts selected for import.")
-		return nil, nil // Not an error
+		return nil, nil
 	}
 	return hostsToImport, nil
 }
@@ -431,30 +409,25 @@ func promptForImportSelection(potentialHosts, importableHosts []config.Potential
 func configureAndConvertImportedHost(pHost config.PotentialHost, currentConfigNames map[string]bool) (*config.SSHHost, error) {
 	fmt.Printf("\nConfiguring import for host '%s' (Alias: %s)...\n", identifierColor.Sprint(pHost.Alias), pHost.Alias)
 
-	// Use alias as default bm name, check for conflicts again just in case
-	// (This check is technically redundant if filterAndDisplayPotentialHosts worked, but good defense)
 	bmName := pHost.Alias
 	if _, exists := currentConfigNames[bmName]; exists {
 		return nil, fmt.Errorf("name '%s' conflicts with an existing host", bmName)
 	}
 
-	// Prompt for Remote Root
 	remoteRootPrompt := "Remote Root Path (optional, defaults to ~/bucket or ~/compose-bucket):"
 	remoteRoot, err := promptString(remoteRootPrompt, false)
 	if err != nil {
 		return nil, fmt.Errorf("error reading remote root: %w", err)
 	}
 
-	// Convert to Bucket Manager Host struct
 	bmHost, err := config.ConvertToBucketManagerHost(pHost, bmName, remoteRoot)
 	if err != nil {
 		return nil, fmt.Errorf("error converting host: %w", err)
 	}
 
-	// If the imported host doesn't have a key path from ssh_config, prompt for auth details
 	if bmHost.KeyPath == "" {
 		fmt.Printf("Host '%s' imported from ssh_config has no IdentityFile specified.\n", bmName)
-		err = promptForAuthDetails(&bmHost, false, "") // Not editing, no original password
+		err = promptForAuthDetails(&bmHost, false, "")
 		if err != nil {
 			return nil, fmt.Errorf("error getting authentication details: %w", err)
 		}
@@ -467,14 +440,12 @@ var sshImportCmd = &cobra.Command{
 	Use:   "import",
 	Short: "Import hosts from ~/.ssh/config interactively",
 	Run: func(cmd *cobra.Command, args []string) {
-		// 1. Load current config
 		cfg, err := config.LoadConfig()
 		if err != nil {
 			logger.Errorf("Error loading current configuration: %v", err)
 			os.Exit(1)
 		}
 
-		// 2. Parse ~/.ssh/config
 		potentialHosts, err := config.ParseSSHConfig()
 		if err != nil {
 			logger.Errorf("Error parsing ~/.ssh/config: %v", err)
@@ -485,21 +456,17 @@ var sshImportCmd = &cobra.Command{
 			return
 		}
 
-		// 3. Filter against current config and display importable hosts
 		importableHosts := filterAndDisplayPotentialHosts(potentialHosts, cfg.SSHHosts)
 
-		// 4. Prompt user to select hosts from the importable list
 		hostsToConfigure, err := promptForImportSelection(potentialHosts, importableHosts)
 		if err != nil {
 			logger.Errorf("Import selection failed: %v", err)
 			os.Exit(1)
 		}
 		if len(hostsToConfigure) == 0 {
-			// User selected nothing or no importable hosts were available
 			return
 		}
 
-		// 5. Configure each selected host
 		fmt.Println("\nFor each selected host, please provide any required details:")
 		successfullyConfiguredHosts := []config.SSHHost{}
 		currentConfigNames := make(map[string]bool) // Rebuild map for checks during configuration loop
@@ -511,7 +478,7 @@ var sshImportCmd = &cobra.Command{
 			bmHostPtr, configErr := configureAndConvertImportedHost(pHost, currentConfigNames)
 			if configErr != nil {
 				logger.Errorf("Skipping import for '%s': %v", pHost.Alias, configErr)
-				continue // Skip this host on error
+				continue
 			}
 			if bmHostPtr != nil {
 				successfullyConfiguredHosts = append(successfullyConfiguredHosts, *bmHostPtr)
@@ -520,13 +487,11 @@ var sshImportCmd = &cobra.Command{
 			}
 		}
 
-		// 6. Check if any hosts were successfully configured
 		if len(successfullyConfiguredHosts) == 0 {
 			fmt.Println("\nNo hosts were successfully configured for import.")
 			return
 		}
 
-		// 7. Append successfully configured hosts and save
 		cfg.SSHHosts = append(cfg.SSHHosts, successfullyConfiguredHosts...)
 		err = config.SaveConfig(cfg)
 		if err != nil {
@@ -534,7 +499,6 @@ var sshImportCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// 8. Report success
 		successColor.Printf("\nSuccessfully imported %d SSH host(s).\n", len(successfullyConfiguredHosts))
 	},
 }
@@ -570,7 +534,7 @@ func promptOptionalInt(prompt string, defaultValue int) (int, error) {
 	fmt.Printf("%s (default: %d): ", prompt, defaultValue)
 	input, err := reader.ReadString('\n')
 	if err != nil {
-		return defaultValue, err // Return default on read error
+		return defaultValue, err
 	}
 	input = strings.TrimSpace(input)
 	if input == "" {
@@ -600,7 +564,7 @@ func chooseAuthMethod(currentMethod int, isEditing bool) (int, error) {
 		fmt.Print("Current: ")
 		switch currentMethod {
 		case 1:
-			fmt.Printf("SSH Key File\n") // Path shown separately if needed
+			fmt.Printf("SSH Key File\n")
 		case 2:
 			fmt.Println("SSH Agent")
 		case 3:
@@ -630,7 +594,6 @@ func chooseAuthMethod(currentMethod int, isEditing bool) (int, error) {
 		choice, err := strconv.Atoi(authChoiceStr)
 		if err != nil || choice < 1 || choice > 3 {
 			fmt.Fprintf(os.Stderr, "Invalid choice '%s', using default/current method (%d).\n", authChoiceStr, currentMethod)
-			// Keep newAuthChoice as currentMethod
 		} else {
 			newAuthChoice = choice
 		}
@@ -641,11 +604,11 @@ func chooseAuthMethod(currentMethod int, isEditing bool) (int, error) {
 // promptForKeyFile prompts for the SSH private key file path.
 func promptForKeyFile(currentPath string, isEditing bool) (string, error) {
 	prompt := "Path to Private Key File"
-	required := true // Key path is required if this method is chosen
+	required := true
 
 	if isEditing && currentPath != "" {
 		prompt += fmt.Sprintf(" [%s]", currentPath)
-		required = false // Not required if editing and already set
+		required = false
 	} else {
 		prompt += ":"
 	}
@@ -655,12 +618,10 @@ func promptForKeyFile(currentPath string, isEditing bool) (string, error) {
 		return "", fmt.Errorf("error reading key path: %w", err)
 	}
 
-	// Keep original if editing and user entered blank
 	if keyPath == "" && isEditing {
 		keyPath = currentPath
 	}
 
-	// Final check: Key path cannot be empty if this method is selected.
 	if keyPath == "" {
 		return "", fmt.Errorf("key path cannot be empty when Key File method is selected")
 	}
@@ -671,7 +632,7 @@ func promptForKeyFile(currentPath string, isEditing bool) (string, error) {
 func promptForPassword(currentPassword string, isEditing bool) (string, error) {
 	fmt.Println(errorColor.Sprint("Warning: Password will be stored in plaintext in the config file!"))
 	prompt := "SSH Password"
-	required := true // Password is required if this method is chosen
+	required := true
 
 	if isEditing && currentPassword != "" {
 		prompt += " (leave blank to keep current):"
@@ -685,12 +646,10 @@ func promptForPassword(currentPassword string, isEditing bool) (string, error) {
 		return "", fmt.Errorf("error reading password: %w", err)
 	}
 
-	// Keep original if editing and user entered blank
 	if password == "" && isEditing {
 		password = currentPassword
 	}
 
-	// Final check: Password cannot be empty if this method is selected.
 	if password == "" {
 		return "", fmt.Errorf("password cannot be empty when Password method is selected")
 	}
@@ -701,7 +660,7 @@ func promptForPassword(currentPassword string, isEditing bool) (string, error) {
 // It modifies the passed host struct directly.
 // originalPassword is only relevant when isEditing is true and current method is password.
 func promptForAuthDetails(host *config.SSHHost, isEditing bool, originalPassword string) error {
-	currentAuthMethod := 2 // Default to agent if no key/password
+	currentAuthMethod := 2
 	if host.KeyPath != "" {
 		currentAuthMethod = 1
 	} else if host.Password != "" {
@@ -713,7 +672,6 @@ func promptForAuthDetails(host *config.SSHHost, isEditing bool, originalPassword
 		return err
 	}
 
-	// Clear old auth details only if the method actually changes
 	methodChanged := newAuthChoice != currentAuthMethod
 	if methodChanged {
 		host.KeyPath = ""
@@ -721,32 +679,31 @@ func promptForAuthDetails(host *config.SSHHost, isEditing bool, originalPassword
 	}
 
 	switch newAuthChoice {
-	case 1: // SSH Key File
-		// Pass the potentially cleared KeyPath if method changed, or original if not editing/method same
+	case 1:
+		// Determine current key path for prompt, considering if method changed
 		currentKeyForPrompt := host.KeyPath
-		if !methodChanged && isEditing {
-			currentKeyForPrompt = host.KeyPath // Use existing if method didn't change
+		if !methodChanged && isEditing { // If editing and method is still key, use current host's key path
+			currentKeyForPrompt = host.KeyPath
 		}
 		keyPath, keyErr := promptForKeyFile(currentKeyForPrompt, isEditing)
 		if keyErr != nil {
 			return keyErr
 		}
 		host.KeyPath = keyPath
-		host.Password = "" // Ensure password is clear
-	case 3: // Password
-		// Pass the potentially cleared Password if method changed, or original if not editing/method same
+		host.Password = ""
+	case 3:
+		// Determine current password for prompt (only if editing and method is still password)
 		currentPassForPrompt := ""
 		if !methodChanged && isEditing {
-			currentPassForPrompt = originalPassword // Use original if method didn't change
+			currentPassForPrompt = originalPassword
 		}
 		password, passErr := promptForPassword(currentPassForPrompt, isEditing)
 		if passErr != nil {
 			return passErr
 		}
 		host.Password = password
-		host.KeyPath = "" // Ensure key path is clear
-	case 2: // SSH Agent
-		// Ensure other fields are cleared if we switched to Agent
+		host.KeyPath = ""
+	case 2:
 		host.KeyPath = ""
 		host.Password = ""
 	}

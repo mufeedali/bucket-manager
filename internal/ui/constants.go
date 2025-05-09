@@ -30,6 +30,6 @@ const (
 )
 
 const (
-	headerHeight              = 2 // Height reserved for the main title header.
+	headerHeight              = 1 // Height reserved for the main title header (single line, JoinVertical adds newline).
 	maxConcurrentStatusChecks = 4 // Limit concurrent stack status checks via SSH.
 )

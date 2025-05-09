@@ -25,7 +25,6 @@ func findStackByIdentifier(stacks []discovery.Stack, identifier string) (discove
 		targetServer = strings.TrimSpace(parts[0])
 		targetName = strings.TrimSpace(parts[1])
 		if targetName == "" || targetServer == "" {
-			// Allow "remote:" format for status command later, but not here for finding a *specific* stack
 			return discovery.Stack{}, fmt.Errorf("invalid identifier format: '%s'. Use 'stack' or 'remote:stack'", identifier)
 		}
 	}
@@ -69,7 +68,7 @@ func findStackByIdentifier(stacks []discovery.Stack, identifier string) (discove
 	for i := range potentialMatches {
 		if !potentialMatches[i].IsRemote {
 			localCount++
-			localMatch = &potentialMatches[i] // Keep track of the last local match found
+			localMatch = &potentialMatches[i]
 		}
 	}
 
@@ -102,25 +101,21 @@ func discoverTargetStacks(identifier string, s *spinner.Spinner) ([]discovery.St
 	if identifier != "" {
 		if strings.HasSuffix(identifier, ":") { // e.g., "server1:"
 			targetServerName = strings.TrimSuffix(identifier, ":")
-			if targetServerName == "" { // Just ":" is invalid
+			if targetServerName == "" {
 				return nil, []error{fmt.Errorf("invalid identifier format: '%s'. Cannot be just ':'", identifier)}
 			}
-			// targetStackName remains "" -> find all on this server
-		} else if parts := strings.SplitN(identifier, ":", 2); len(parts) == 2 { // e.g., "server1:app"
+		} else if parts := strings.SplitN(identifier, ":", 2); len(parts) == 2 {
 			targetServerName = strings.TrimSpace(parts[0])
 			targetStackName = strings.TrimSpace(parts[1])
 			if targetStackName == "" || targetServerName == "" {
 				return nil, []error{fmt.Errorf("invalid identifier format: '%s'. Use 'stack', 'remote:stack', or 'remote:'", identifier)}
 			}
-		} else { // e.g., "app"
+		} else {
 			targetStackName = identifier
-			// targetServerName remains "" -> implies local preference or ambiguous
 		}
 	}
-	// If identifier is "", scanAll case: targetServerName and targetStackName remain ""
 
 	cfg, configErr := config.LoadConfig()
-	// Defer returning config error until we know we need remotes
 
 	scanAll := identifier == ""
 	discoverLocal := targetServerName == "local" || targetServerName == ""
@@ -155,7 +150,7 @@ func discoverTargetStacks(identifier string, s *spinner.Spinner) ([]discovery.St
 		if targetHost == nil {
 			collectedErrors = append(collectedErrors, fmt.Errorf("remote host '%s' not found in configuration", targetServerName))
 		} else {
-			if s != nil { // Update spinner if provided
+			if s != nil {
 				originalSuffix := s.Suffix
 				s.Suffix = fmt.Sprintf(" Discovering on %s...", identifierColor.Sprint(targetServerName))
 				defer func() { s.Suffix = originalSuffix }()
@@ -180,7 +175,7 @@ func discoverTargetStacks(identifier string, s *spinner.Spinner) ([]discovery.St
 
 	if discoverAllRemotes {
 		foundLocally := false
-		if targetStackName != "" { // Only relevant if looking for a specific stack
+		if targetStackName != "" {
 			for _, s := range stacksToCheck {
 				if !s.IsRemote && s.Name == targetStackName {
 					foundLocally = true
@@ -241,7 +236,7 @@ func discoverTargetStacks(identifier string, s *spinner.Spinner) ([]discovery.St
 				s.Suffix = " Discovering all stacks..."
 				defer func() { s.Suffix = originalSuffix }()
 			}
-			stacksToCheck = nil // Reset stacksToCheck as FindStacks will get everything
+			stacksToCheck = nil
 			stackChan, errorChan, _ := discovery.FindStacks()
 			var wg sync.WaitGroup
 			wg.Add(2)
@@ -281,17 +276,13 @@ func discoverTargetStacks(identifier string, s *spinner.Spinner) ([]discovery.St
 			if resolveErr == nil {
 				finalStacks = []discovery.Stack{resolvedStack}
 			} else {
-				// If ambiguity cannot be resolved, return the error
 				return nil, append(collectedErrors, resolveErr)
 			}
 		} else if len(finalStacks) == 0 && len(collectedErrors) == 0 {
-			// If no stacks matched and no discovery errors occurred, generate a "not found" error
-			// Use findStackByIdentifier on the original unfiltered list to get the correct ambiguity error if applicable
 			_, notFoundErr := findStackByIdentifier(stacksToCheck, identifier)
 			if notFoundErr != nil {
-				return nil, []error{notFoundErr} // Return ambiguity or initial not found error
+				return nil, []error{notFoundErr}
 			}
-			// If findStackByIdentifier didn't error (e.g., stacksToCheck was empty), return generic not found
 			return nil, []error{fmt.Errorf("no stacks found matching identifier '%s'", identifier)}
 		}
 	}

@@ -188,7 +188,7 @@ Otherwise, shows status for all discovered stacks.`,
 
 		discoveryIdentifier := ""
 		if !scanAll {
-			discoveryIdentifier = args[0] // Use the provided identifier directly
+			discoveryIdentifier = args[0]
 			statusColor.Printf("Checking status for %s...\n", identifierColor.Sprint(discoveryIdentifier))
 			s.Suffix = fmt.Sprintf(" Discovering %s...", identifierColor.Sprint(discoveryIdentifier))
 		} else {
@@ -210,8 +210,6 @@ Otherwise, shows status for all discovered stacks.`,
 			}
 			errorColor.Fprintln(os.Stderr, "Continuing with successfully discovered stacks...")
 		}
-
-		// Ambiguity/not found errors for specific identifiers are handled within discoverTargetStacks
 
 		if len(stacksToProcess) == 0 {
 			if scanAll {
@@ -235,7 +233,7 @@ Otherwise, shows status for all discovered stacks.`,
 					defer statusWg.Done()
 					statusInfo := runner.GetStackStatus(s)
 					statusChan <- statusInfo
-				}(stack) // Pass stack by value
+				}(stack)
 			}
 
 			go func() {

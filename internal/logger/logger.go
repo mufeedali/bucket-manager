@@ -29,7 +29,6 @@ func getLogFilePath() (string, error) {
 // setupLogging configures the default logger based on whether to log to file and/or stderr.
 func setupLogging(logToFile bool, logToStderr bool) error {
 	if !logToFile && !logToStderr {
-		// Default to stderr if neither is specified, to ensure logs aren't lost.
 		logToStderr = true
 		fmt.Fprintln(os.Stderr, "Warning: No log output specified, defaulting to stderr.")
 	}
@@ -40,22 +39,18 @@ func setupLogging(logToFile bool, logToStderr bool) error {
 	if logToFile {
 		logFilePath, err := getLogFilePath()
 		if err != nil {
-			// Log error to stderr since file logging failed.
 			fmt.Fprintf(os.Stderr, "Error determining log file path: %v. File logging disabled.\n", err)
-			// Continue without file logging if path fails
 		} else {
 			logDir := filepath.Dir(logFilePath)
-			// Create log directory
 			if err := os.MkdirAll(logDir, 0750); err != nil {
 				fmt.Fprintf(os.Stderr, "Error creating log directory %s: %v. File logging disabled.\n", logDir, err)
 			} else {
-				// Open log file
 				file, err := os.OpenFile(logFilePath, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0640)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error opening log file %s: %v. File logging disabled.\n", logFilePath, err)
 				} else {
 					writers = append(writers, file)
-					logFileHandle = file // For a CLI tool, letting the OS close it on exit is generally acceptable.
+					logFileHandle = file
 				}
 			}
 		}
@@ -78,14 +73,11 @@ func setupLogging(logToFile bool, logToStderr bool) error {
 	// Using JSON handler for structured logging consistency.
 	opts := &slog.HandlerOptions{
 		Level: slog.LevelInfo,
-		// AddSource: true,           // Uncomment to add source file/line to logs
 	}
 	handler := slog.NewJSONHandler(finalWriter, opts)
 	defaultLogger = slog.New(handler)
 
-	// Note: logFileHandle is not explicitly closed here.
-	// For a long-running application, managing file handle closure might be needed.
-	// For a CLI tool, letting the OS close it on exit is generally acceptable.
+	// For a CLI tool, letting the OS close logFileHandle on exit is generally acceptable.
 	_ = logFileHandle // Avoid unused variable error if file logging is disabled
 
 	return nil
@@ -131,7 +123,7 @@ func SetLogger(l *slog.Logger) {
 func checkLogger() {
 	if defaultLogger == nil {
 		fmt.Fprintln(os.Stderr, "Error: Logger accessed before InitLogger was called. Initializing with defaults.")
-		InitLogger(false) // Initialize with CLI defaults as a safety measure
+		InitLogger(false)
 	}
 }
 
@@ -156,8 +148,6 @@ func Error(msg string, args ...any) {
 }
 
 // Errorf logs a formatted error message.
-// Note: slog prefers structured logging over formatted strings.
-// This function is kept for compatibility but using Error with key-value pairs is recommended.
 func Errorf(format string, v ...interface{}) {
 	checkLogger()
 	defaultLogger.Error(fmt.Sprintf(format, v...))
@@ -170,7 +160,6 @@ func Debug(msg string, args ...any) {
 }
 
 // Debugf logs a formatted debug message.
-// Note: slog prefers structured logging over formatted strings.
 func Debugf(format string, v ...interface{}) {
 	checkLogger()
 	defaultLogger.Debug(fmt.Sprintf(format, v...))
@@ -183,7 +172,6 @@ func Warn(msg string, args ...any) {
 }
 
 // Warnf logs a formatted warning message.
-// Note: slog prefers structured logging over formatted strings.
 func Warnf(format string, v ...interface{}) {
 	checkLogger()
 	defaultLogger.Warn(fmt.Sprintf(format, v...))

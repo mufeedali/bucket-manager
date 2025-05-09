@@ -45,7 +45,6 @@ func (m *model) renderStackStatus(b *strings.Builder, stackID string) {
 
 	// Display error if status fetch failed
 	if !isLoading && loaded && statusInfo.Error != nil {
-		// Render the error message using the errorStyle
 		fmt.Fprintf(b, "%s", errorStyle.Render(fmt.Sprintf("  Error fetching status: %v\n", statusInfo.Error)))
 	}
 
@@ -86,7 +85,7 @@ func (m *model) renderStackStatus(b *strings.Builder, stackID string) {
 
 func (m *model) renderLoadingView() (string, string) {
 	body := statusStyle.Render("Loading stacks...")
-	footer := "\n" + m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc
+	footer := m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc
 	return body, footer
 }
 
@@ -128,7 +127,6 @@ func (m *model) renderStackListView() (string, string) {
 	}
 
 	footerContent := strings.Builder{}
-	footerContent.WriteString("\n")
 
 	if m.isDiscovering {
 		footerContent.WriteString(statusLoadingStyle.Render("Discovering remote stacks...") + "\n")
@@ -166,7 +164,6 @@ func (m *model) renderRunningSequenceView() (string, string) {
 	bodyStr := m.outputContent // Use the raw content for setting viewport
 
 	footerContent := strings.Builder{}
-	footerContent.WriteString("\n")
 
 	stackIdentifier := ""
 	if m.sequenceStack != nil {
@@ -193,7 +190,6 @@ func (m *model) renderSequenceErrorView() (string, string) {
 	bodyStr := m.outputContent // Use the raw content
 
 	footerContent := strings.Builder{}
-	footerContent.WriteString("\n")
 
 	stackIdentifier := ""
 	if m.sequenceStack != nil {
@@ -239,7 +235,6 @@ func (m *model) renderStackDetailsView() (string, string) {
 	}
 
 	footerContent := strings.Builder{}
-	footerContent.WriteString("\n")
 	help := strings.Builder{}
 	help.WriteString(m.keymap.Back.Help().Key + ": back to list | ")
 	help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
@@ -287,7 +282,6 @@ func (m *model) renderSshConfigListView() (string, string) {
 	}
 
 	footerContent := strings.Builder{}
-	footerContent.WriteString("\n")
 
 	help := strings.Builder{}
 	help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + ": navigate | ")
@@ -334,7 +328,6 @@ func (m *model) renderSshConfigRemoveConfirmView() (string, string) {
 	}
 
 	footerContent := strings.Builder{}
-	footerContent.WriteString("\n")
 	help := strings.Builder{}
 	if m.hostToRemove != nil {
 		help.WriteString(fmt.Sprintf("Confirm removal of '%s'? ", identifierColor.Render(m.hostToRemove.Name)))
@@ -362,7 +355,6 @@ func (m *model) renderPruneConfirmView() (string, string) {
 	}
 
 	footerContent := strings.Builder{}
-	footerContent.WriteString("\n")
 	help := strings.Builder{}
 	if len(m.hostsToPrune) > 0 {
 		targetName := m.hostsToPrune[0].ServerName
@@ -382,7 +374,6 @@ func (m *model) renderRunningHostActionView() (string, string) {
 	bodyStr := m.outputContent
 
 	footerContent := strings.Builder{}
-	footerContent.WriteString("\n")
 
 	targetName := "unknown host"
 	actionName := "action"
@@ -436,7 +427,6 @@ func (m *model) renderSshConfigAddFormView() (string, string) {
 	}
 
 	footerContent := strings.Builder{}
-	footerContent.WriteString("\n")
 
 	if m.formError != nil {
 		footerContent.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.formError)) + "\n")
@@ -503,7 +493,6 @@ func (m *model) renderSshConfigEditFormView() (string, string) {
 
 	// Footer generation
 	footerContent := strings.Builder{}
-	footerContent.WriteString("\n")
 
 	if m.formError != nil {
 		footerContent.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.formError)) + "\n")
@@ -548,7 +537,6 @@ func (m *model) renderSshConfigImportSelectView() (string, string) {
 	}
 
 	footerContent := strings.Builder{}
-	footerContent.WriteString("\n")
 
 	help := strings.Builder{}
 	if len(m.selectedImportIdxs) > 0 {
@@ -609,7 +597,6 @@ func (m *model) renderSshConfigImportDetailsView() (string, string) {
 	}
 
 	footerContent := strings.Builder{}
-	footerContent.WriteString("\n")
 
 	remaining := 0
 	if m.configuringHostIdx >= 0 { // Check index validity

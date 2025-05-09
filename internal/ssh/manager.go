@@ -55,19 +55,18 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 	}
 
 	sshConfig := &ssh.ClientConfig{
-		User: hostConfig.User,
-		Auth: authMethods,
+		User:    hostConfig.User,
+		Auth:    authMethods,
 		Timeout: 10 * time.Second,
 	}
 	// Add proper host key verification
 	hostKeyCallback, khErr := createHostKeyCallback()
 	if khErr != nil {
-		// Log the error but potentially continue if it's just a missing file
+		// Log the error but potentially continue if it's just a missing file.
 		// Allowing connection without verification is risky, but might be acceptable for some tools.
 		// We'll log and proceed without strict verification if the file is missing/unparsable.
-		// A better approach might involve prompting the user or failing.
 		logger.Warnf("Could not create known_hosts callback for %s: %v. Host key will not be verified.", hostConfig.Name, khErr)
-		sshConfig.HostKeyCallback = ssh.InsecureIgnoreHostKey() // Fallback to insecure
+		sshConfig.HostKeyCallback = ssh.InsecureIgnoreHostKey()
 	} else {
 		sshConfig.HostKeyCallback = hostKeyCallback
 	}
@@ -114,21 +113,17 @@ func (m *Manager) getAuthMethods(hostConfig config.SSHHost) ([]ssh.AuthMethod, e
 			return nil, fmt.Errorf("failed to read private key file %s: %w", keyPath, err)
 		}
 
-		// Attempt to parse the private key
 		signer, err := ssh.ParsePrivateKey(key)
 		if err != nil {
-			// Check if the error is due to encryption
 			if _, ok := err.(*ssh.PassphraseMissingError); ok {
 				// Log a warning that encrypted keys are not yet supported by this method.
 				// We won't add this key as an auth method in this case.
 				logger.Warnf("Private key file %s is encrypted and passphrase prompting is not yet supported here. Skipping key.", keyPath)
 				// Continue to check other auth methods (agent, password)
 			} else {
-				// Return other parsing errors
 				return nil, fmt.Errorf("failed to parse private key file %s: %w", keyPath, err)
 			}
 		} else {
-			// If parsing succeeded (unencrypted key), add it as an auth method
 			methods = append(methods, ssh.PublicKeys(signer))
 		}
 	}
@@ -179,22 +174,13 @@ func createHostKeyCallback() (ssh.HostKeyCallback, error) {
 	}
 	knownHostsPath := filepath.Join(homeDir, ".ssh", "known_hosts")
 
-	// knownhosts.New also handles creating the file if it doesn't exist,
-	// but it's better practice to check existence or handle the error specifically.
-	// We'll let it try to create/read and handle potential errors.
 	callback, err := knownhosts.New(knownHostsPath)
 	if err != nil {
-		// Don't treat file not found as a fatal error for the callback creation itself,
-		// but log it. The actual connection attempt will fail later if the key is unknown.
-		// Other errors (like permission issues) might be more critical.
 		if os.IsNotExist(err) {
 			logger.Warnf("known_hosts file (%s) not found. Will attempt connection without verification.", knownHostsPath)
 			// Return InsecureIgnoreHostKey as a fallback ONLY if file doesn't exist.
-			// This allows first-time connections but is less secure.
-			// Consider prompting user in a real application.
-			return ssh.InsecureIgnoreHostKey(), nil // Return nil error as we handled the specific case
+			return ssh.InsecureIgnoreHostKey(), nil
 		}
-		// For other errors (permissions, format issues), return the error.
 		return nil, fmt.Errorf("failed to load or parse known_hosts file %s: %w", knownHostsPath, err)
 	}
 	return callback, nil

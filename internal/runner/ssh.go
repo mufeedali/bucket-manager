@@ -69,9 +69,6 @@ func runSSHCommand(
 		}
 		// Use a common terminal type like xterm-256color
 		if err := session.RequestPty("xterm-256color", 80, 40, modes); err != nil {
-			// Log non-critical error, but continue execution
-			// Some servers might not support PTY allocation but commands might still work
-			// Using fmt.Fprintf to avoid circular dependency on logger package
 			fmt.Fprintf(os.Stderr, "Warning: Failed to request pty for %s (continuing): %v\n", cmdDesc, err)
 		}
 	}
@@ -115,11 +112,9 @@ func runSSHCommand(
 
 	if cmdErr != nil {
 		exitCode := -1
-		// Try to extract the exit code from the SSH error
 		if exitErr, ok := cmdErr.(*gossh.ExitError); ok {
 			exitCode = exitErr.ExitStatus()
 		}
-		// Provide a more informative error message including the exit code if available
 		if exitCode != -1 {
 			errChan <- fmt.Errorf("%s exited with status %d: %w", cmdDesc, exitCode, cmdErr)
 		} else {
@@ -159,10 +154,9 @@ func runSSHStatusCheck(stack discovery.Stack, psArgs []string, cmdDesc string) (
 	}
 	remoteCmdString := strings.Join(remoteCmdParts, " ")
 
-	// Use CombinedOutput for status check as it's typically short
+	// CombinedOutput is suitable for short status checks.
 	output, err := session.CombinedOutput(remoteCmdString)
 	if err != nil {
-		// Return the error along with the output (which might contain stderr)
 		return output, fmt.Errorf("remote command failed for %s: %w", cmdDesc, err)
 	}
 	return output, nil

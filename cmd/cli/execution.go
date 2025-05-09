@@ -22,7 +22,6 @@ func runStackAction(action string, args []string) {
 
 	statusColor.Printf("Locating stack '%s'...\n", stackIdentifier)
 
-	// Note: discoverTargetStacks is assumed to be moved to discovery.go or similar
 	stacksToCheck, collectedErrors := discoverTargetStacks(stackIdentifier, nil)
 
 	if len(collectedErrors) > 0 {
@@ -33,7 +32,6 @@ func runStackAction(action string, args []string) {
 		os.Exit(1)
 	}
 
-	// Note: findStackByIdentifier is assumed to be moved to discovery.go or similar
 	targetStack, err := findStackByIdentifier(stacksToCheck, stackIdentifier)
 	if err != nil {
 		errorColor.Fprintf(os.Stderr, "\nError: %v\n", err)
@@ -70,7 +68,6 @@ func runSequence(stack discovery.Stack, sequence []runner.CommandStep) error {
 	for _, step := range sequence {
 		stepColor.Printf("\n--- Running Step: %s for %s (%s) ---\n", step.Name, stack.Name, identifierColor.Sprint(stack.ServerName))
 
-		// CLI always uses cliMode: true for direct output
 		outChan, errChan := runner.StreamCommand(step, true)
 
 		var stepErr error
@@ -121,7 +118,6 @@ func runHostAction(actionName string, targets []runner.HostTarget) error {
 			}
 
 			stepColor.Printf("\n--- Running Step: %s for host %s ---\n", step.Name, identifierColor.Sprint(t.ServerName))
-			// CLI always uses cliMode: true for direct output
 			outChan, stepErrChan := runner.RunHostCommand(step, true)
 
 			var stepErr error
@@ -146,8 +142,8 @@ func runHostAction(actionName string, targets []runner.HostTarget) error {
 
 			if stepErr != nil {
 				err := fmt.Errorf("step '%s' failed for host %s", step.Name, t.ServerName)
-				logger.Errorf("%v", err) // Log the error
-				errChan <- err           // Send the error to the channel
+				logger.Errorf("%v", err)
+				errChan <- err
 				return
 			}
 			successColor.Printf("--- Step '%s' completed successfully for host %s ---\n", step.Name, identifierColor.Sprint(t.ServerName))
@@ -163,8 +159,6 @@ func runHostAction(actionName string, targets []runner.HostTarget) error {
 	}
 
 	if len(collectedErrors) > 0 {
-		// Combine errors or return the first one, or a summary error
-		// Returning a summary error here
 		return fmt.Errorf("%d host action(s) failed", len(collectedErrors))
 	}
 
