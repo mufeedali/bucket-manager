@@ -78,6 +78,7 @@ type model struct {
 	hostsToConfigure   []config.SSHHost    // Hosts built from import details form
 	configuringHostIdx int                 // Index in importableHosts currently being configured
 	statusCheckSem     *semaphore.Weighted // Semaphore for limiting status checks
+	sshConfigModified  bool                // Flag indicating if SSH config was changed since entering the view
 }
 
 // fetchStackStatusCmd fetches the status for a single stack, respecting concurrency limits.
@@ -126,6 +127,7 @@ func InitialModel() model {
 		formViewport:         vp,
 		importSelectViewport: vp,
 		statusCheckSem:       semaphore.NewWeighted(maxConcurrentStatusChecks),
+		sshConfigModified:    false,
 	}
 	return m
 }
@@ -471,6 +473,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// --- Handle State-Specific Navigation and Actions ---
 		switch m.currentState {
+		case stateLoadingStacks:
+			// Allow quitting or going back from the loading screen
+			switch {
+			case key.Matches(msg, m.keymap.Quit):
+				return m, tea.Quit
+			case key.Matches(msg, m.keymap.Back), key.Matches(msg, m.keymap.Esc):
+				// Go back to the stack list and stop the discovery indication
+				m.currentState = stateStackList
+				m.isDiscovering = false
+				// Clear any errors that might have occurred during the aborted discovery
+				m.lastError = nil
+				m.discoveryErrors = nil
+				// TODO: Implement cancellation for the background findStacksCmd if possible
+			}
 		case stateStackList:
 			switch {
 			case key.Matches(msg, m.keymap.Config):
@@ -499,7 +515,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, m.keymap.Quit):
 				return m, tea.Quit
 			case key.Matches(msg, m.keymap.Back):
-				m.currentState = stateStackList
+				// Check if config was modified before deciding where to go/what to do
+				if m.sshConfigModified {
+					m.sshConfigModified = false // Reset the flag
+					// Trigger the full refresh which will change state to loading
+					cmds = append(cmds, m.triggerConfigAndStackRefresh())
+				} else {
+					// No changes, just go back to stack list
+					m.currentState = stateStackList
+				}
+				// Clear errors specific to the config view when leaving
 				m.lastError = nil
 				m.importError = nil
 				m.importInfoMsg = ""
@@ -978,7 +1003,6 @@ func (m *model) View() string {
 
 		// Apply the border to the rendered body content
 		bodyStr = mainContentBorderStyle.
-			Width(m.width).          // Border takes full available width
 			Height(bodyBlockHeight). // Let lipgloss determine height of bordered box based on content + border
 			Render(renderedBodyContent)
 	}

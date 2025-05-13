@@ -85,7 +85,7 @@ func (m *model) renderStackStatus(b *strings.Builder, stackID string) {
 
 func (m *model) renderLoadingView() (string, string) {
 	body := statusStyle.Render("Loading stacks...")
-	footer := m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc
+	footer := footerKeyStyle.Render(m.keymap.Quit.Help().Key) + footerDescStyle.Render(": "+m.keymap.Quit.Help().Desc)
 	return body, footer
 }
 
@@ -143,19 +143,19 @@ func (m *model) renderStackListView() (string, string) {
 
 	help := strings.Builder{}
 	if len(m.selectedStackIdxs) > 0 {
-		help.WriteString(fmt.Sprintf("(%d selected) ", len(m.selectedStackIdxs)))
+		help.WriteString(footerDescStyle.Render(fmt.Sprintf("(%d selected) ", len(m.selectedStackIdxs))))
 	}
-	help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + ": navigate | ")
-	help.WriteString(m.keymap.Select.Help().Key + ": " + m.keymap.Select.Help().Desc + " | ")
-	help.WriteString(m.keymap.Enter.Help().Key + ": details | ")
-	help.WriteString(m.keymap.UpAction.Help().Key + ": up | ")
-	help.WriteString(m.keymap.DownAction.Help().Key + ": down | ")
-	help.WriteString(m.keymap.RefreshAction.Help().Key + ": refresh | ")
-	help.WriteString(m.keymap.PullAction.Help().Key + ": pull")
-	help.WriteString(" | ")
-	help.WriteString(m.keymap.Config.Help().Key + ": " + m.keymap.Config.Help().Desc + " | ")
-	help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Up.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Down.Help().Key) + footerDescStyle.Render(": navigate") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Select.Help().Key) + footerDescStyle.Render(": "+m.keymap.Select.Help().Desc) + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Enter.Help().Key) + footerDescStyle.Render(": details") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.UpAction.Help().Key) + footerDescStyle.Render(": up") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.DownAction.Help().Key) + footerDescStyle.Render(": down") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.RefreshAction.Help().Key) + footerDescStyle.Render(": refresh") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.PullAction.Help().Key) + footerDescStyle.Render(": pull"))
+	help.WriteString(footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Config.Help().Key) + footerDescStyle.Render(": "+m.keymap.Config.Help().Desc) + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Quit.Help().Key) + footerDescStyle.Render(": "+m.keymap.Quit.Help().Desc))
+	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String())) // Keep lipgloss width rendering for wrapping
 
 	return bodyContent.String(), footerContent.String()
 }
@@ -178,10 +178,10 @@ func (m *model) renderRunningSequenceView() (string, string) {
 	}
 
 	help := strings.Builder{}
-	help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.PgUp.Help().Key + "/" + m.keymap.PgDown.Help().Key + ": scroll | ")
-	help.WriteString(m.keymap.Back.Help().Key + "/" + m.keymap.Enter.Help().Key + ": back to list | ")
-	help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-	footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Up.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Down.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.PgUp.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.PgDown.Help().Key) + footerDescStyle.Render(": scroll") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Back.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Enter.Help().Key) + footerDescStyle.Render(": back to list") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Quit.Help().Key) + footerDescStyle.Render(": "+m.keymap.Quit.Help().Desc))
+	footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String())) // Keep lipgloss width rendering
 
 	return bodyStr, footerContent.String()
 }
@@ -202,10 +202,10 @@ func (m *model) renderSequenceErrorView() (string, string) {
 	}
 
 	help := strings.Builder{}
-	help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.PgUp.Help().Key + "/" + m.keymap.PgDown.Help().Key + ": scroll | ")
-	help.WriteString(m.keymap.Back.Help().Key + "/" + m.keymap.Enter.Help().Key + ": back to list | ")
-	help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-	footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Up.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Down.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.PgUp.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.PgDown.Help().Key) + footerDescStyle.Render(": scroll") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Back.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Enter.Help().Key) + footerDescStyle.Render(": back to list") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Quit.Help().Key) + footerDescStyle.Render(": "+m.keymap.Quit.Help().Desc))
+	footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String())) // Keep lipgloss width rendering
 
 	return bodyStr, footerContent.String()
 }
@@ -236,9 +236,9 @@ func (m *model) renderStackDetailsView() (string, string) {
 
 	footerContent := strings.Builder{}
 	help := strings.Builder{}
-	help.WriteString(m.keymap.Back.Help().Key + ": back to list | ")
-	help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Back.Help().Key) + footerDescStyle.Render(": back to list") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Quit.Help().Key) + footerDescStyle.Render(": "+m.keymap.Quit.Help().Desc))
+	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String())) // Keep lipgloss width rendering
 
 	return bodyContent.String(), footerContent.String()
 }
@@ -284,20 +284,20 @@ func (m *model) renderSshConfigListView() (string, string) {
 	footerContent := strings.Builder{}
 
 	help := strings.Builder{}
-	help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + ": navigate | ")
+	help.WriteString(footerKeyStyle.Render(m.keymap.Up.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Down.Help().Key) + footerDescStyle.Render(": navigate") + footerSeparatorStyle.Render(" | "))
 	// Show actions based on selection
 	if m.configCursor == 0 { // "local" selected
-		help.WriteString(m.keymap.PruneAction.Help().Key + ": prune | ")
+		help.WriteString(footerKeyStyle.Render(m.keymap.PruneAction.Help().Key) + footerDescStyle.Render(": prune") + footerSeparatorStyle.Render(" | "))
 	} else { // Remote host selected
-		help.WriteString(m.keymap.Edit.Help().Key + ": edit | ")
-		help.WriteString(m.keymap.Remove.Help().Key + ": remove | ")
-		help.WriteString(m.keymap.PruneAction.Help().Key + ": prune | ")
+		help.WriteString(footerKeyStyle.Render(m.keymap.Edit.Help().Key) + footerDescStyle.Render(": edit") + footerSeparatorStyle.Render(" | "))
+		help.WriteString(footerKeyStyle.Render(m.keymap.Remove.Help().Key) + footerDescStyle.Render(": remove") + footerSeparatorStyle.Render(" | "))
+		help.WriteString(footerKeyStyle.Render(m.keymap.PruneAction.Help().Key) + footerDescStyle.Render(": prune") + footerSeparatorStyle.Render(" | "))
 	}
 	// Add and Import are always available
-	help.WriteString(m.keymap.Add.Help().Key + ": add | ")
-	help.WriteString(m.keymap.Import.Help().Key + ": import | ")
-	help.WriteString(m.keymap.Back.Help().Key + ": back | ")
-	help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
+	help.WriteString(footerKeyStyle.Render(m.keymap.Add.Help().Key) + footerDescStyle.Render(": add") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Import.Help().Key) + footerDescStyle.Render(": import") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Back.Help().Key) + footerDescStyle.Render(": back") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Quit.Help().Key) + footerDescStyle.Render(": "+m.keymap.Quit.Help().Desc))
 
 	errorOrInfo := ""
 	if m.hostActionError != nil { // Display host action error first
@@ -330,14 +330,14 @@ func (m *model) renderSshConfigRemoveConfirmView() (string, string) {
 	footerContent := strings.Builder{}
 	help := strings.Builder{}
 	if m.hostToRemove != nil {
-		help.WriteString(fmt.Sprintf("Confirm removal of '%s'? ", identifierColor.Render(m.hostToRemove.Name)))
-		help.WriteString(m.keymap.Yes.Help().Key + ": " + m.keymap.Yes.Help().Desc + " | ")
-		help.WriteString(m.keymap.No.Help().Key + "/" + m.keymap.Back.Help().Key + ": " + m.keymap.No.Help().Desc + "/cancel")
+		help.WriteString(footerDescStyle.Render(fmt.Sprintf("Confirm removal of '%s'? ", identifierColor.Render(m.hostToRemove.Name))))
+		help.WriteString(footerKeyStyle.Render(m.keymap.Yes.Help().Key) + footerDescStyle.Render(": "+m.keymap.Yes.Help().Desc) + footerSeparatorStyle.Render(" | "))
+		help.WriteString(footerKeyStyle.Render(m.keymap.No.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Back.Help().Key) + footerDescStyle.Render(": "+m.keymap.No.Help().Desc+"/cancel"))
 	} else {
 		help.WriteString(errorStyle.Render("Error - no host selected. "))
-		help.WriteString(m.keymap.Back.Help().Key + ": back")
+		help.WriteString(footerKeyStyle.Render(m.keymap.Back.Help().Key) + footerDescStyle.Render(": back"))
 	}
-	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String())) // Keep lipgloss width rendering
 
 	// For simple confirmation views, body is often placed without a viewport
 	return bodyContent.String(), footerContent.String()
@@ -358,14 +358,14 @@ func (m *model) renderPruneConfirmView() (string, string) {
 	help := strings.Builder{}
 	if len(m.hostsToPrune) > 0 {
 		targetName := m.hostsToPrune[0].ServerName
-		help.WriteString(fmt.Sprintf("Confirm prune action for host '%s'? ", identifierColor.Render(targetName)))
-		help.WriteString(m.keymap.Yes.Help().Key + ": " + m.keymap.Yes.Help().Desc + " | ")
-		help.WriteString(m.keymap.No.Help().Key + "/" + m.keymap.Back.Help().Key + ": " + m.keymap.No.Help().Desc + "/cancel")
+		help.WriteString(footerDescStyle.Render(fmt.Sprintf("Confirm prune action for host '%s'? ", identifierColor.Render(targetName))))
+		help.WriteString(footerKeyStyle.Render(m.keymap.Yes.Help().Key) + footerDescStyle.Render(": "+m.keymap.Yes.Help().Desc) + footerSeparatorStyle.Render(" | "))
+		help.WriteString(footerKeyStyle.Render(m.keymap.No.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Back.Help().Key) + footerDescStyle.Render(": "+m.keymap.No.Help().Desc+"/cancel"))
 	} else {
 		help.WriteString(errorStyle.Render("Error - no host selected. "))
-		help.WriteString(m.keymap.Back.Help().Key + ": back")
+		help.WriteString(footerKeyStyle.Render(m.keymap.Back.Help().Key) + footerDescStyle.Render(": back"))
 	}
-	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String())) // Keep lipgloss width rendering
 
 	return bodyContent.String(), footerContent.String()
 }
@@ -386,9 +386,9 @@ func (m *model) renderRunningHostActionView() (string, string) {
 	footerContent.WriteString(statusStyle.Render(fmt.Sprintf("Running %s on '%s'...", actionName, identifierColor.Render(targetName))))
 
 	help := strings.Builder{}
-	help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.PgUp.Help().Key + "/" + m.keymap.PgDown.Help().Key + ": scroll | ")
-	help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-	footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String()))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Up.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Down.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.PgUp.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.PgDown.Help().Key) + footerDescStyle.Render(": scroll") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Quit.Help().Key) + footerDescStyle.Render(": "+m.keymap.Quit.Help().Desc))
+	footerContent.WriteString("\n" + lipgloss.NewStyle().Width(m.width).Render(help.String())) // Keep lipgloss width rendering
 
 	return bodyStr, footerContent.String()
 }
@@ -432,12 +432,12 @@ func (m *model) renderSshConfigAddFormView() (string, string) {
 		footerContent.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.formError)) + "\n")
 	}
 	help := strings.Builder{}
-	help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.Tab.Help().Key + "/" + m.keymap.ShiftTab.Help().Key + ": navigate | ")
-	help.WriteString(m.keymap.Left.Help().Key + "/" + m.keymap.Right.Help().Key + ": change auth | ")
-	help.WriteString(m.keymap.Enter.Help().Key + ": save | ")
-	help.WriteString(m.keymap.Esc.Help().Key + ": " + m.keymap.Esc.Help().Desc + " | ")
-	help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Up.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Down.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Tab.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.ShiftTab.Help().Key) + footerDescStyle.Render(": navigate") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Left.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Right.Help().Key) + footerDescStyle.Render(": change auth") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Enter.Help().Key) + footerDescStyle.Render(": save") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Esc.Help().Key) + footerDescStyle.Render(": "+m.keymap.Esc.Help().Desc) + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Quit.Help().Key) + footerDescStyle.Render(": "+m.keymap.Quit.Help().Desc))
+	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String())) // Keep lipgloss width rendering
 
 	return bodyContent.String(), footerContent.String()
 }
@@ -498,13 +498,13 @@ func (m *model) renderSshConfigEditFormView() (string, string) {
 		footerContent.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.formError)) + "\n")
 	}
 	help := strings.Builder{}
-	help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.Tab.Help().Key + "/" + m.keymap.ShiftTab.Help().Key + ": navigate | ")
-	help.WriteString(m.keymap.Left.Help().Key + "/" + m.keymap.Right.Help().Key + ": change auth | ")
-	help.WriteString(m.keymap.ToggleDisabled.Help().Key + ": " + m.keymap.ToggleDisabled.Help().Desc + " | ")
-	help.WriteString(m.keymap.Enter.Help().Key + ": save | ")
-	help.WriteString(m.keymap.Esc.Help().Key + ": " + m.keymap.Esc.Help().Desc + " | ")
-	help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Up.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Down.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Tab.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.ShiftTab.Help().Key) + footerDescStyle.Render(": navigate") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Left.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Right.Help().Key) + footerDescStyle.Render(": change auth") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.ToggleDisabled.Help().Key) + footerDescStyle.Render(": "+m.keymap.ToggleDisabled.Help().Desc) + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Enter.Help().Key) + footerDescStyle.Render(": save") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Esc.Help().Key) + footerDescStyle.Render(": "+m.keymap.Esc.Help().Desc) + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Quit.Help().Key) + footerDescStyle.Render(": "+m.keymap.Quit.Help().Desc))
+	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String())) // Keep lipgloss width rendering
 
 	return bodyContent.String(), footerContent.String()
 }
@@ -540,14 +540,14 @@ func (m *model) renderSshConfigImportSelectView() (string, string) {
 
 	help := strings.Builder{}
 	if len(m.selectedImportIdxs) > 0 {
-		help.WriteString(fmt.Sprintf("(%d selected) ", len(m.selectedImportIdxs)))
+		help.WriteString(footerDescStyle.Render(fmt.Sprintf("(%d selected) ", len(m.selectedImportIdxs))))
 	}
-	help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + ": navigate | ")
-	help.WriteString(m.keymap.Select.Help().Key + ": " + m.keymap.Select.Help().Desc + " | ")
-	help.WriteString(m.keymap.Enter.Help().Key + ": confirm")
-	help.WriteString(" | " + m.keymap.Back.Help().Key + ": cancel | ")
-	help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Up.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Down.Help().Key) + footerDescStyle.Render(": navigate") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Select.Help().Key) + footerDescStyle.Render(": "+m.keymap.Select.Help().Desc) + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Enter.Help().Key) + footerDescStyle.Render(": confirm"))
+	help.WriteString(footerSeparatorStyle.Render(" | ") + footerKeyStyle.Render(m.keymap.Back.Help().Key) + footerDescStyle.Render(": cancel") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Quit.Help().Key) + footerDescStyle.Render(": "+m.keymap.Quit.Help().Desc))
+	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String())) // Keep lipgloss width rendering
 
 	return bodyContent.String(), footerContent.String()
 }
@@ -614,12 +614,12 @@ func (m *model) renderSshConfigImportDetailsView() (string, string) {
 		footerContent.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.formError)) + "\n")
 	}
 	help := strings.Builder{}
-	help.WriteString(m.keymap.Up.Help().Key + "/" + m.keymap.Down.Help().Key + "/" + m.keymap.Tab.Help().Key + "/" + m.keymap.ShiftTab.Help().Key + ": navigate | ")
-	help.WriteString(m.keymap.Left.Help().Key + "/" + m.keymap.Right.Help().Key + ": change auth | ")
-	help.WriteString(fmt.Sprintf("%s: confirm & next (%d %s remaining) | ", m.keymap.Enter.Help().Key, remaining, hostLabel))
-	help.WriteString(m.keymap.Esc.Help().Key + ": cancel import | ")
-	help.WriteString(m.keymap.Quit.Help().Key + ": " + m.keymap.Quit.Help().Desc)
-	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String()))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Up.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Down.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Tab.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.ShiftTab.Help().Key) + footerDescStyle.Render(": navigate") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Left.Help().Key) + footerSeparatorStyle.Render("/") + footerKeyStyle.Render(m.keymap.Right.Help().Key) + footerDescStyle.Render(": change auth") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Enter.Help().Key) + footerDescStyle.Render(fmt.Sprintf(": confirm & next (%d %s remaining)", remaining, hostLabel)) + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Esc.Help().Key) + footerDescStyle.Render(": cancel import") + footerSeparatorStyle.Render(" | "))
+	help.WriteString(footerKeyStyle.Render(m.keymap.Quit.Help().Key) + footerDescStyle.Render(": "+m.keymap.Quit.Help().Desc))
+	footerContent.WriteString(lipgloss.NewStyle().Width(m.width).Render(help.String())) // Keep lipgloss width rendering
 
 	return bodyContent.String(), footerContent.String()
 }

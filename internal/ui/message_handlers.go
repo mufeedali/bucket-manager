@@ -130,6 +130,10 @@ func handleSshHostsImportedMsg(m *model, msg sshHostsImportedMsg) tea.Cmd {
 			info += fmt.Sprintf(" Skipped %d host(s) due to existing names.", msg.skippedCount)
 		}
 		m.importInfoMsg = info
+		// Mark as modified only if hosts were actually added
+		if msg.importedCount > 0 {
+			m.sshConfigModified = true
+		}
 	}
 
 	// Clean up import state regardless of success/failure
@@ -138,8 +142,8 @@ func handleSshHostsImportedMsg(m *model, msg sshHostsImportedMsg) tea.Cmd {
 	m.hostsToConfigure = nil
 	m.formInputs = nil
 
-	// Trigger refresh
-	return m.triggerConfigAndStackRefresh()
+	// Go back to list and refresh config only
+	return loadSshConfigCmd()
 }
 
 func handleStackDiscoveredMsg(m *model, msg stackDiscoveredMsg) tea.Cmd {
@@ -235,8 +239,10 @@ func handleStepFinishedMsg(m *model, msg stepFinishedMsg) tea.Cmd {
 			m.currentState = stateSshConfigList // Go back to list on error
 			cmds = append(cmds, loadSshConfigCmd())
 		} else {
-			// Successful removal: Trigger refresh
-			cmds = append(cmds, m.triggerConfigAndStackRefresh())
+			// Successful removal: Go back to list, mark modified, refresh config only
+			m.sshConfigModified = true
+			m.currentState = stateSshConfigList
+			cmds = append(cmds, loadSshConfigCmd())
 		}
 
 	case stateRunningSequence:
@@ -351,8 +357,10 @@ func handleSshHostAddedMsg(m *model, msg sshHostAddedMsg) tea.Cmd {
 			m.formError = msg.err // Display error on the form
 			return nil            // Stay in the form state
 		}
-		// Success: Trigger refresh
-		return m.triggerConfigAndStackRefresh()
+		// Success: Go back to list, mark modified, refresh config only
+		m.sshConfigModified = true
+		m.currentState = stateSshConfigList
+		return loadSshConfigCmd()
 	}
 	// Ignore if received in an unexpected state
 	return nil
@@ -365,8 +373,10 @@ func handleSshHostEditedMsg(m *model, msg sshHostEditedMsg) tea.Cmd {
 			m.formError = msg.err // Display error on the form
 			return nil            // Stay in the form state
 		}
-		// Success: Trigger refresh
-		return m.triggerConfigAndStackRefresh()
+		// Success: Go back to list, mark modified, refresh config only
+		m.sshConfigModified = true
+		m.currentState = stateSshConfigList
+		return loadSshConfigCmd()
 	}
 	// Ignore if received in an unexpected state
 	return nil
