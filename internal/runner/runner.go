@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -107,7 +108,7 @@ func streamPipe(pipe io.Reader, outChan chan<- OutputLine, doneChan chan<- struc
 			outChan <- OutputLine{Line: string(buf[:n]), IsError: isError}
 		}
 		if err != nil {
-			if err != io.EOF && err != os.ErrClosed {
+			if !errors.Is(err, io.EOF) && !errors.Is(err, os.ErrClosed) {
 				fmt.Fprintf(os.Stderr, "Pipe read error (%v): %v\n", isError, err)
 			}
 			break

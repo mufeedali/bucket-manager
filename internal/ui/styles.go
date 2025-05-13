@@ -22,7 +22,8 @@ var (
 	mainContentBorderStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder(), true).
 				BorderForeground(lipgloss.Color("238")) // Light grey border
-		// Footer / Status Bar Styles
+
+	// Footer / Status Bar Styles
 	footerStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("250")) // Default light grey text
 
