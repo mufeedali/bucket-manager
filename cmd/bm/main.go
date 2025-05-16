@@ -12,12 +12,11 @@ import (
 )
 
 func main() {
-	// Initialize logger for CLI mode (logs to file and stderr)
 	logger.InitLogger(false)
 
-	if len(os.Args) <= 1 {
-		tui.RunTUI()
-	} else {
+	if len(os.Args) > 1 {
 		cli.RunCLI()
+	} else {
+		tui.RunTUI()
 	}
 }

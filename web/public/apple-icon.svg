@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+  <!-- Background circle for Apple devices -->
+  <circle cx="50" cy="50" r="45" fill="#ffffff"/>
+  
+  <!-- Monochrome bucket with left handle and hinge - sized to fit within the circle -->
+  
+  <!-- Bucket outline -->
+  <path d="M30,40 L70,40 L67,80 L33,80 Z" fill="none" stroke="#000" stroke-width="2.5"/>
+  
+  <!-- Bucket handle with hinges on both sides -->
+  <path d="M34,40 C30,40 27,36 27,32 C27,27 35,25 50,25 C65,25 73,27 73,32 C73,36 70,40 66,40" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Handle hinges -->
+  <circle cx="34" cy="40" r="2.5" fill="#000"/>
+  <circle cx="66" cy="40" r="2.5" fill="#000"/>
+  
+  <!-- Container 1 - bottom -->
+  <rect x="36" y="67" width="28" height="10" rx="2" fill="none" stroke="#000" stroke-width="2"/>
+  
+  <!-- Container 2 - middle -->
+  <rect x="39" y="57" width="22" height="10" rx="2" fill="none" stroke="#000" stroke-width="2"/>
+  
+  <!-- Container 3 - top -->
+  <rect x="42" y="47" width="16" height="10" rx="2" fill="none" stroke="#000" stroke-width="2"/>
+</svg>

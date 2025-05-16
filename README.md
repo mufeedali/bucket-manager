@@ -36,11 +36,11 @@ This project uses Go and provides a `justfile` for easier building and installat
     This creates the `bm` binary in the current directory.
 
 ## Usage
-
-The single `bm` binary provides both a Command-Line Interface (CLI) and a Text User Interface (TUI).
+The single `bm` binary provides a Command-Line Interface (CLI), a Text User Interface (TUI), and a Web UI.
 
 - **To use the CLI:** Run `bm` followed by a command (e.g., `bm list`, `bm up my-stack`).
 - **To use the TUI:** Run `bm` with no arguments.
+- **To use the Web UI:** Run `bm serve` to start the web server (see [Web UI](#web-ui) section below).face (CLI) and Text User Interface (TUI) to discover and manage multiple Podman Compose stacks located locally or on remote hosts via SSH.
 
 ### Stack Identifier Format
 
@@ -179,6 +179,27 @@ bm prune server1
 # Prune local system AND all configured remote hosts
 bm prune
 ```
+
+### Web UI
+
+Launch the web-based user interface by running:
+
+```bash
+bm serve
+```
+
+This starts an HTTP server on port 8080 that serves:
+- The Bucket Manager web UI (built with Next.js, React.js, and shadcn-ui)
+- A REST API that the UI uses to communicate with the backend
+
+You can access the web interface by opening [http://localhost:8080](http://localhost:8080) in your browser.
+
+The Web UI provides:
+- A modern, user-friendly interface for managing your Podman Compose stacks
+- Real-time status updates for stacks (Up, Down, Partial, Error)
+- Ability to perform all stack operations (Up, Down, Refresh, Pull)
+- SSH configuration management
+- Stack discovery across local and remote hosts
 
 ### Shell Completion
 

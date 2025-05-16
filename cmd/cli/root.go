@@ -39,7 +39,8 @@ var rootCmd = &cobra.Command{
 	Long: `A command-line interface to manage multiple Podman Compose stacks.
 
 Discovers stacks in standard local directories (~/bucket, ~/compose-bucket)
-and on remote hosts configured via SSH (~/.config/bucket-manager/config.yaml).`,
+and on remote hosts configured via SSH (~/.config/bucket-manager/config.yaml).
+Use 'bm serve' to start the web interface.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := config.EnsureConfigDir(); err != nil {
 			return fmt.Errorf("failed to ensure config directory: %w", err)
