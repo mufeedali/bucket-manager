@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package ui's commands.go file contains Bubble Tea commands that perform
+// asynchronous operations in the TUI. These commands handle long-running tasks
+// like discovering stacks, executing podman compose operations, and managing
+// configurations without blocking the UI.
+
 package ui
 
 import (
@@ -13,9 +18,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// --- Commands ---
+// --- Bubble Tea Commands ---
 // These functions create tea.Cmds to perform asynchronous operations.
+// Each command runs in its own goroutine and communicates back to the main
+// UI loop by sending messages through the Bubble Tea program.
 
+// findStacksCmd creates a command to discover all available stacks.
+// It handles both local and remote stack discovery in the background.
 func findStacksCmd() tea.Cmd {
 	return func() tea.Msg {
 		stackChan, errorChan, doneChan := discovery.FindStacks()

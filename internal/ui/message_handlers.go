@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package ui's message_handlers.go file implements the message processing logic for the TUI.
+// This file contains methods that handle the various message types defined in messages.go,
+// updating the UI model state in response to events like stack discovery, command execution,
+// and form submissions.
+
 package ui
 
 import (
@@ -14,6 +19,7 @@ import (
 
 // --- Message Handlers ---
 // These methods handle specific message types received by the model's Update function.
+// Each handler processes a particular message type and returns any follow-up commands.
 
 // triggerConfigAndStackRefresh resets UI state related to stacks and config,
 // then returns commands to reload SSH config and rediscover stacks.

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package ssh provides functionality for establishing and managing SSH connections
+// to remote hosts. It handles authentication, connection pooling, and provides
+// methods to execute commands on remote systems.
 package ssh
 
 import (
@@ -18,22 +21,30 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
+// Manager handles SSH connections to remote hosts.
+// It maintains a pool of connections to avoid repeatedly establishing new connections
+// to the same hosts and provides thread-safe access to these connections.
 type Manager struct {
-	clients map[string]*ssh.Client
-	mu      sync.Mutex
+	clients map[string]*ssh.Client // Map of host names to active SSH clients
+	mu      sync.Mutex             // Mutex to protect concurrent access to clients map
 }
 
+// NewManager creates and initializes a new SSH connection manager
 func NewManager() *Manager {
 	return &Manager{
 		clients: make(map[string]*ssh.Client),
 	}
 }
 
+// GetClient returns an established SSH client for the specified host configuration.
+// It reuses existing connections when possible, and creates new ones when necessary.
+// The method includes connection validation and reconnection logic for robustness.
 func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 	m.mu.Lock()
 	client, found := m.clients[hostConfig.Name]
 	if found {
 		// Send keepalive to check if cached client is still valid (not foolproof).
+		// This helps detect stale connections without a full reconnect attempt
 		_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
 		if err == nil {
 			m.mu.Unlock()
@@ -98,10 +109,16 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 	return newClient, nil
 }
 
+// getAuthMethods prepares authentication methods for SSH connection based on the host configuration.
+// It tries multiple authentication methods in this order:
+// 1. SSH key authentication if KeyPath is provided
+// 2. SSH agent authentication if SSH_AUTH_SOCK environment variable is available
+// 3. Password authentication if Password is provided in the host config
 func (m *Manager) getAuthMethods(hostConfig config.SSHHost) ([]ssh.AuthMethod, error) {
 	var methods []ssh.AuthMethod
 
 	if hostConfig.KeyPath != "" {
+		// Attempt to resolve potential relative paths or ~ expansion
 		keyPath, resolveErr := config.ResolvePath(hostConfig.KeyPath)
 		if resolveErr != nil {
 			logger.Errorf("Warning: could not resolve key path '%s': %v", hostConfig.KeyPath, resolveErr)
@@ -144,6 +161,9 @@ func (m *Manager) getAuthMethods(hostConfig config.SSHHost) ([]ssh.AuthMethod, e
 	return methods, nil
 }
 
+// CloseAll closes all active SSH connections managed by this Manager.
+// This should be called when the application is shutting down or when
+// all SSH connections need to be refreshed.
 func (m *Manager) CloseAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -155,6 +175,9 @@ func (m *Manager) CloseAll() {
 	}
 }
 
+// Close closes a specific SSH connection by hostname.
+// This can be used when a specific connection needs to be refreshed or
+// when the connection to a specific host is no longer needed.
 func (m *Manager) Close(hostName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -167,6 +190,10 @@ func (m *Manager) Close(hostName string) {
 }
 
 // createHostKeyCallback attempts to load the user's known_hosts file.
+// This function creates a host key verification callback based on the standard
+// ~/.ssh/known_hosts file for security-conscious SSH connectivity.
+// If the known_hosts file doesn't exist, a warning is logged and an insecure
+// callback is returned as a fallback (accepting any host key).
 func createHostKeyCallback() (ssh.HostKeyCallback, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {

@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2025 Mufeed Ali
+
+// Package logger provides structured logging capabilities for the bucket manager application.
+// It handles log configuration, redirection to appropriate outputs, and provides
+// wrapper functions for different log levels.
 package logger
 
 import (
@@ -8,6 +14,7 @@ import (
 	"path/filepath"
 )
 
+// defaultLogger is the package-level logger instance used by all logging functions
 var defaultLogger *slog.Logger
 
 // getLogFilePath determines the path for the application log file based on XDG spec.

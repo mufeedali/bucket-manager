@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// This file contains functions for shell tab completion support in the bucket manager CLI.
+// It provides dynamic completion for stack names, remote hosts, and other contextual values.
+
 package cli
 
 import (
@@ -14,6 +17,7 @@ import (
 )
 
 // discoverLocalStacksForCompletion performs local discovery for completion, ignoring "not found" errors.
+// This provides a more user-friendly experience where tab completion works even if directories don't exist yet.
 func discoverLocalStacksForCompletion() ([]discovery.Stack, error) {
 	localRootDir, err := discovery.GetComposeRootDirectory()
 	if err != nil {

@@ -1,22 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package ui's styles.go file defines the visual styling for the TUI application.
+// It uses the lipgloss library to create consistent text and UI element styles
+// with appropriate colors, borders, and formatting.
+
 package ui
 
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	titleStyle             = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("62"))
-	errorStyle             = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	statusStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	stepStyle              = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	successStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	cursorStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
-	statusUpStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	statusDownStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	statusPartialStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	statusErrorStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("208"))
-	statusLoadingStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	// General UI element styles
+	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("62")) // Purple title text
+	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))             // Red error messages
+	statusStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))            // Blue status messages
+	stepStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))            // Yellow step indicators
+	successStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))            // Green success messages
+	cursorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))             // Magenta cursor indicator
+
+	// Stack status indicator styles
+	statusUpStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))  // Green for "up" status
+	statusDownStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))   // Red for "down" status
+	statusPartialStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))  // Yellow for "partial" status
+	statusErrorStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("208")) // Orange for "error" status
+	statusLoadingStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))   // Grey for "loading" status
 	serverNameStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Italic(true)
 	identifierColor        = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	mainContentBorderStyle = lipgloss.NewStyle().

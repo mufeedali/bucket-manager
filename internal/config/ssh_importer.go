@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package config provides functionality for SSH host configuration importing.
+// This file specifically handles importing SSH hosts from the user's ~/.ssh/config file,
+// allowing users to easily add their existing SSH configurations to the bucket manager.
+
 package config
 
 import (
@@ -13,14 +17,17 @@ import (
 	"github.com/kevinburke/ssh_config"
 )
 
+// PotentialHost represents an SSH host configuration parsed from the user's SSH config file.
+// These entries can be imported into the bucket manager's configuration.
 type PotentialHost struct {
-	Alias    string
-	Hostname string
-	User     string
-	Port     int
-	KeyPath  string
+	Alias    string // Host alias as defined in SSH config (e.g., "my-server")
+	Hostname string // Actual hostname or IP address to connect to
+	User     string // Username for SSH connection
+	Port     int    // Port number for SSH connection
+	KeyPath  string // Path to the identity file (private key)
 }
 
+// DefaultSSHConfigPath returns the standard location of the user's SSH config file.
 func DefaultSSHConfigPath() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -29,6 +36,9 @@ func DefaultSSHConfigPath() (string, error) {
 	return filepath.Join(homeDir, ".ssh", "config"), nil
 }
 
+// ParseSSHConfig reads the user's SSH config file and extracts host configurations.
+// It returns a slice of PotentialHost objects that can be imported into the bucket manager.
+// If the SSH config file doesn't exist, it returns an empty slice without an error.
 func ParseSSHConfig() ([]PotentialHost, error) {
 	sshConfigPath, err := DefaultSSHConfigPath()
 	if err != nil {
@@ -38,6 +48,7 @@ func ParseSSHConfig() ([]PotentialHost, error) {
 	f, err := os.Open(sshConfigPath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// Not an error if the file doesn't exist, just return empty results
 			return []PotentialHost{}, nil
 		}
 		return nil, fmt.Errorf("failed to open ssh config file %s: %w", sshConfigPath, err)

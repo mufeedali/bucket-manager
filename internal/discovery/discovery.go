@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package discovery provides functionality for finding Podman Compose stack directories
+// in both local and remote environments. It handles scanning directories,
+// detecting compose files, and determining stack status.
 package discovery
 
 import (
@@ -21,11 +24,15 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
+// maxConcurrentDiscoveries limits the number of concurrent discovery operations
+// to prevent overwhelming local or remote systems
 const maxConcurrentDiscoveries = 8
 
+// sshManager provides access to SSH connections for remote discovery operations
 var sshManager *ssh.Manager
 
 // InitSSHManager sets the package-level SSH manager instance.
+// This must be called before performing any remote discovery operations.
 func InitSSHManager(manager *ssh.Manager) {
 	if sshManager != nil {
 		return
@@ -33,13 +40,16 @@ func InitSSHManager(manager *ssh.Manager) {
 	sshManager = manager
 }
 
+// Stack represents a discovered Podman Compose stack, which is a directory
+// containing compose files (docker-compose.yml, podman-compose.yml, etc.)
+// The Stack can be either local or on a remote SSH host.
 type Stack struct {
-	Name               string
-	Path               string // Full local path OR path relative to AbsoluteRemoteRoot on SSH host
-	ServerName         string // "local" or the Name field from SSHHost config
-	IsRemote           bool
-	HostConfig         *config.SSHHost // nil if local
-	AbsoluteRemoteRoot string          // empty if local
+	Name               string          // Name of the stack (derived from directory name)
+	Path               string          // Full local path OR path relative to AbsoluteRemoteRoot on SSH host
+	ServerName         string          // "local" or the Name field from SSHHost config
+	IsRemote           bool            // True if stack is on a remote server, false if local
+	HostConfig         *config.SSHHost // SSH host configuration (nil if local)
+	AbsoluteRemoteRoot string          // Root directory on remote host (empty if local)
 }
 
 // Identifier returns the unique string representation (e.g., "my-app" or "server1:my-app").

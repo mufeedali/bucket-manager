@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package tui implements the Text User Interface mode for the bucket manager,
+// providing an interactive terminal application for browsing and managing
+// Podman Compose stacks using the Bubble Tea framework.
 package tui
 
 import (
@@ -16,18 +19,23 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// RunTUI initializes and starts the Text User Interface application.
+// This is the main entry point for the TUI mode of the bucket manager.
 func RunTUI() {
-	// Initialize logger for TUI mode (logs to file only)
+	// Initialize logger for TUI mode (logs to file only to avoid cluttering the UI)
 	logger.InitLogger(true)
 
+	// Ensure configuration directory exists
 	if err := config.EnsureConfigDir(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error ensuring config directory: %v\n", err)
 		os.Exit(1)
 	}
 
+	// Initialize SSH connection manager
 	sshManager := ssh.NewManager()
-	defer sshManager.CloseAll()
+	defer sshManager.CloseAll() // Ensure all SSH connections are closed on exit
 
+	// Share SSH manager with discovery package for remote stack operations
 	discovery.InitSSHManager(sshManager)
 	runner.InitSSHManager(sshManager)
 

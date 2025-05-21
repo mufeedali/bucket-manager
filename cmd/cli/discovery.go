@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package cli's discovery.go implements the stack discovery and selection functionality
+// for the command line interface. It handles identifying stacks by name or server:name
+// format and resolves ambiguous references according to the CLI's preference rules.
+
 package cli
 
 import (
@@ -16,6 +20,11 @@ import (
 // findStackByIdentifier finds a specific stack based on its identifier.
 // Identifier can be "stackName" (implies local preference) or "serverName:stackName".
 // Returns an error if not found or if "stackName" is ambiguous.
+//
+// The function uses a preference system:
+// 1. If serverName is specified, it looks for an exact match
+// 2. If only stackName is given, it prefers local stacks
+// 3. If multiple matches exist, it requires an explicit server name
 func findStackByIdentifier(stacks []discovery.Stack, identifier string) (discovery.Stack, error) {
 	identifier = strings.TrimSpace(identifier)
 	targetName := identifier

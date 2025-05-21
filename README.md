@@ -1,247 +1,116 @@
 # Bucket Manager (bm)
 
-A command-line interface (CLI) and Text User Interface (TUI) to discover and manage multiple Podman Compose stacks located locally or on remote hosts via SSH.
+Bucket Manager is a tool for managing multiple Podman Compose stacks across local and remote machines. It provides three interfaces: a command-line (CLI), a text-based UI (TUI), and a web interface.
 
-## Features
+## Quick Start
 
-- Discover Podman Compose stacks in standard (well, my standard) local directories (`~/bucket`, `~/compose-bucket`) or a custom local root.
-- Discover stacks in configured remote directories on SSH hosts.
-- Manage SSH host configurations (add, edit, list, remove, import from `~/.ssh/config`).
-- View stack status (Up, Down, Partial, Error) for local and remote stacks.
-- Run common `podman compose` actions (`up`, `down`, `pull`, `refresh`) on individual or multiple selected stacks (local or remote).
-- Run `podman system prune -af` on local or remote hosts (`prune`).
-- Pull latest images for stacks (`pull`).
-- Interactive TUI for easy navigation and management.
-- CLI for scripting and quick actions.
-- Shell completion support (bash, zsh, fish, powershell).
+1. **Install:**
+   ```bash
+   just install
+   ```
+   This installs the `bm` binary to `~/.local/bin/` (ensure this is in your `$PATH`).
 
-## Installation / Building
+2. **Choose an interface:**
+   - **CLI:** `bm list`, `bm up my-stack`
+   - **TUI:** `bm` (with no arguments)
+   - **Web UI:** `bm serve` and open http://localhost:8080
 
-This project uses Go and provides a `justfile` for easier building and installation (requires `just` to be installed: https://github.com/casey/just).
+## Core Features
 
-1.  **Clone the repository (if you haven't already):**
-    ```bash
-    # git clone <repository-url>
-    # cd bucket-manager
-    ```
-2.  **Install `bm` using Just:**
-    This command builds the `bm` binary (which includes both CLI and TUI modes) and installs it to `~/.local/bin`. Ensure `~/.local/bin` is in your `$PATH`.
-    ```bash
-    just install
-    ```
-    *Alternative: Build locally without installing:*
-    ```bash
-    just build
-    ```
-    This creates the `bm` binary in the current directory.
+- Manage Podman Compose stacks locally and on remote SSH hosts
+- Control stacks (up, down, pull, refresh) individually or in bulk
+- View real-time stack status (Up, Down, Partial, Error)
+- Configure SSH hosts for remote management
+- System cleanup with podman prune
 
-## Usage
-The single `bm` binary provides a Command-Line Interface (CLI), a Text User Interface (TUI), and a Web UI.
+## Stack Commands
 
-- **To use the CLI:** Run `bm` followed by a command (e.g., `bm list`, `bm up my-stack`).
-- **To use the TUI:** Run `bm` with no arguments.
-- **To use the Web UI:** Run `bm serve` to start the web server (see [Web UI](#web-ui) section below).face (CLI) and Text User Interface (TUI) to discover and manage multiple Podman Compose stacks located locally or on remote hosts via SSH.
+| Command | Description |
+|---------|-------------|
+| `bm list` | List all stacks |
+| `bm up <stack>` | Start a stack |
+| `bm down <stack>` | Stop a stack |
+| `bm pull <stack>` | Pull latest images |
+| `bm refresh <stack>` | Full refresh (pull, down, up) |
+| `bm status [stack]` | Show status of all or specific stacks |
+| `bm prune [hosts]` | Clean up Docker resources |
 
-### Stack Identifier Format
+## Stack Naming
 
-Commands like `up`, `down`, `refresh`, `pull`, and `status` accept a `<stack-identifier>` argument to target specific stacks. This identifier can take several forms:
+Stacks can be referenced in three ways:
 
-1.  **`server-name:stack-name`**: This is the most explicit format.
-    - Use `local:stack-name` to target a stack named `stack-name` on the local machine.
-    - Use `remote-host-name:stack-name` to target a stack named `stack-name` on the configured SSH host `remote-host-name`.
-    - This format guarantees targeting a single, specific stack instance.
+1. **Full name:** `server:stack-name` (e.g., `local:app` or `server1:api`)
+2. **Short name:** `stack-name` (tries local first, then remote)
+3. **Server only:** `server:` (only for `bm status`, e.g., `bm status server1:`)
 
-2.  **`stack-name`**: When only the stack name is provided (e.g., `bm status my-app`, `bm up my-app`), `bm` follows this logic to find the target stack:
-    - It searches for stacks matching `stack-name` both locally and on all configured remote hosts.
-    - If exactly *one* match is found (either local or remote), that stack is targeted.
-    - If *multiple* matches are found, `bm` attempts to resolve the ambiguity:
-        - If *exactly one* of the matches is local, the local stack is preferred and targeted.
-        - Otherwise (multiple local matches, or multiple remote matches and no local match), an ambiguity error is reported, and you must use the explicit `server-name:stack-name` format (e.g., `local:stack-name` or `remote-host:stack-name`).
-    - If `stack-name` is not found locally or on any remote host, a "not found" error is reported.
+Tab completion helps find the right names.
 
-3.  **`server-name:`** (Note the trailing colon): Used *only* with the `bm status` command to show the status of *all* stacks on a specific remote host (e.g., `bm status server1:`).
+## Additional Features
 
-**Note:** The TUI and `bm list` command display stacks using the format `stack-name (server-name)` for clarity, but the input format for commands uses `:` as the separator (e.g., `local:my-app`, `server1:api`). Tab completion can help find the correct identifier.
+### Web Interface
 
-### Configuration
-
-Bucket Manager stores its configuration in `~/.config/bucket-manager/config.yaml`. This file is created automatically when needed.
-
-You can manage the configuration using the `bm config` command.
-
-**SSH Host Management:**
-
-- `bm config ssh list`: Show all configured SSH hosts.
-- `bm config ssh add`: Interactively add a new SSH host. You'll be prompted for:
-    - Unique Name (e.g., `server1`)
-    - Hostname/IP
-    - SSH User
-    - Port (defaults to 22)
-    - Remote Root Path (optional, defaults to `~/bucket` or `~/compose-bucket` on the remote host)
-    - Authentication Method (SSH Key, Agent, or Password)
-- `bm config ssh edit`: Interactively edit an existing SSH host configuration.
-- `bm config ssh remove`: Interactively remove an SSH host configuration.
-- `bm config ssh import`: Interactively import hosts from your `~/.ssh/config` file.
-
-**Local Stack Root Management:**
-
-By default, `bm` searches for local stacks in `~/bucket` and `~/compose-bucket`. You can override this:
-
-- `bm config set-local-root <path>`: Set a custom absolute path (or `~/path`) for local stack discovery. Set to `""` (empty string) to revert to default search paths.
-- `bm config get-local-root`: Show the currently configured local stack root directory (or indicates default paths are being used).
-
-### CLI Commands
-
-- `bm list`:
-    - Lists all discovered Podman Compose stacks, both local and remote.
-    - Displays the stack name and server identifier: `stack-name (server-name)`.
-
-- `bm up <stack-identifier>`:
-    - Runs `podman compose pull` and `podman compose up -d` for the specified stack (local or remote).
-    - Use the identifier format, e.g., `bm up my-app` or `bm up server1:api`.
-    - Tab completion is available.
-
-- `bm down <stack-identifier>`:
-    - Runs `podman compose down` for the specified stack (local or remote).
-    - Use the identifier format. Tab completion is available.
-   
-- `bm pull <stack-identifier>`:
-    - Runs `podman compose pull` for the specified stack (local or remote).
-    - Use the identifier format. Tab completion is available.
-   
-- `bm refresh <stack-identifier>` (alias: `bm re ...`):
-    - Performs a full refresh cycle: `pull`, `down`, `up -d`.
-    - If the stack is local, it also runs `podman system prune -af`.
-    - Use the identifier format. Tab completion is available.
-
-- `bm status [stack-identifier]`:
-    - Shows the status of containers for one or all stacks.
-    - If no identifier is provided, shows status for all discovered stacks.
-    - If `stack-name` or `server:stack-name` is provided, shows status for that specific stack.
-    - If `server:` (with a trailing colon) is provided, shows status for all stacks on that specific remote server.
-    - Tab completion is available for stack identifiers.
-
-- `bm config ...`: (See [Configuration](#configuration) section above)
-
-- `bm prune [host-identifier...]`:
-    - Runs `podman system prune -af` on the specified hosts.
-    - If no host identifiers are provided, it targets the **local host AND all configured remote hosts**.
-    - Provide `local` to target only the local system.
-    - Provide specific remote host names (e.g., `server1 server2`) to target only those hosts.
-    - Tab completion is available for host identifiers.
-
-**Example:**
-
-```bash
-# List all local and remote stacks
-bm list
-
-# Bring up the 'actual' stack on the local machine
-bm up actual
-# Or explicitly:
-bm up local:actual
-
-# Bring up the 'api' stack on the remote host named 'server1'
-bm up server1:api
-
-# Check the status of all stacks
-bm status
-
-# Check the detailed status of the 'cup' stack on 'server1'
-bm status server1:cup
-
-# Check the status of ALL stacks on 'server1'
-bm status server1:
-
-# Stop the 'actual' stack (assuming it resolved to local or was specified)
-bm down actual 
-# Or explicitly:
-bm down local:actual
-
-# Pull latest images for the 'api' stack on 'server1'
-bm pull server1:api
-
-# Refresh the 'beaver' stack on 'server1'
-bm refresh server1:beaver
-
-# List configured SSH hosts
-bm config ssh list
-
-# Add a new SSH host interactively
-bm config ssh add
-
-# Prune the local system only
-bm prune local
-
-# Prune the remote host 'server1' only
-bm prune server1
-
-# Prune local system AND all configured remote hosts
-bm prune
-```
-
-### Web UI
-
-Launch the web-based user interface by running:
-
-```bash
-bm serve
-```
-
-This starts an HTTP server on port 8080 that serves:
-- The Bucket Manager web UI (built with Next.js, React.js, and shadcn-ui)
-- A REST API that the UI uses to communicate with the backend
-
-You can access the web interface by opening [http://localhost:8080](http://localhost:8080) in your browser.
-
-The Web UI provides:
-- A modern, user-friendly interface for managing your Podman Compose stacks
-- Real-time status updates for stacks (Up, Down, Partial, Error)
-- Ability to perform all stack operations (Up, Down, Refresh, Pull)
-- SSH configuration management
-- Stack discovery across local and remote hosts
+Run `bm serve` to start the web interface on http://localhost:8080, offering:
+- Modern graphical interface for stack management
+- Real-time status updates
+- Remote host configuration
+- Command output streaming
 
 ### Shell Completion
 
-`bm` supports generating shell completion scripts for various shells (bash, zsh, fish, powershell) using the built-in `completion` command.
+Install tab completion for your shell:
+```bash
+# For Fish shell
+mkdir -p ~/.config/fish/completions
+bm completion fish > ~/.config/fish/completions/bm.fish
+```
 
-For example, to install completions for Fish shell:
-
-1.  Ensure the completions directory exists (`mkdir -p ~/.config/fish/completions`).
-2.  Generate the completion script:
-    ```bash
-    bm completion fish > ~/.config/fish/completions/bm.fish
-    ```
-3.  Restart your Fish shell or source the file for the changes to take effect.
-
-For other shells, replace `fish` with the appropriate shell name (e.g., `bash`, `zsh`) when running `bm completion` and consult your shell's documentation for the correct installation path.
-
-**Note:** Tab completion is optimized to prioritize local stacks. If you start typing a stack name that exists locally and haven't typed a colon (`:`), it will suggest local matches immediately without searching remotes, providing faster results. If you type a colon or no local match is found, it will proceed to discover and suggest remote stacks as well.
+For other shells, replace `fish` with `bash`, `zsh`, or `powershell` and the appropriate path.
 
 ### TUI Mode
 
-Launch the interactive Text User Interface by running `bm` without any commands or arguments:
+The text interface (`bm` with no arguments) provides:
+- Interactive navigation with keyboard shortcuts
+- Multi-stack selection and operations
+- Real-time status updates
+- SSH configuration management (`c` key)
+- Host pruning
 
-```bash
-bm
-```
+### SSH Configuration
 
-The TUI provides:
-- An interactive list of all discovered local and remote stacks.
-- Real-time status updates for stacks (Up, Down, Partial, Error, Loading).
-- Ability to select single or multiple stacks.
-- Actions (Up, Down, Refresh, Pull) applicable to the selected stack(s).
-- Detailed view showing individual container status for a stack.
-- SSH configuration management screen (add, edit, list, remove, import) accessible via the `c` key.
-- Prune action (`ctrl+p`) available on the SSH configuration screen to prune the selected host.
-
-Refer to the TUI's help bar at the bottom for specific controls within each view.
+Manage remote hosts:
+- `bm config ssh list` - Show all hosts
+- `bm config ssh add` - Add a new host
+- `bm config ssh edit` - Edit an existing host
+- `bm config ssh import` - Import from ~/.ssh/config
 
 ### Stack Discovery
 
-- **Local:** `bm` looks for directories containing a `compose.yaml` or `compose.yml` file within `~/bucket` and `~/compose-bucket`, or a custom path set via `bm config set-local-root`. Each such directory represents a stack. The first root directory found containing stacks will be used.
-- **Remote:** `bm` connects to each configured (and enabled) SSH host and searches for stacks within the host's `remote_root` path (defaulting to `~/bucket` or `~/compose-bucket` on the remote machine if not specified).
+- **Local:** Finds `compose.yaml`/`compose.yml` files in `~/bucket` or `~/compose-bucket`
+- **Remote:** Searches the same paths on configured SSH hosts
+- **Custom paths:** Set with `bm config set-local-root <path>`
+
+## Examples
+
+```bash
+# Start a local stack
+bm up myapp
+
+# Start a stack on a remote server
+bm up server1:api
+
+# Check all stack statuses
+bm status
+
+# Check statuses on just one server
+bm status server1:
+
+# Complete refresh of a stack (pull, down, up)
+bm refresh myapp
+
+# Clean up Docker resources locally
+bm prune local
+```
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+[Apache License 2.0](LICENSE)

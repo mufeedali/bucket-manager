@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package cli's execution.go contains the implementation logic for CLI commands
+// that execute actions on stacks or hosts. It handles targeting stacks by name,
+// running podman compose actions, and managing multiple concurrent operations.
+
 package cli
 
 import (
@@ -13,6 +17,8 @@ import (
 )
 
 // runStackAction locates the target stack and executes a predefined sequence of runner steps.
+// It handles parsing the stack identifier, discovering the stack, and executing the
+// specified action (up, down, refresh, or pull) on the stack.
 func runStackAction(action string, args []string) {
 	if len(args) != 1 {
 		errorColor.Fprintf(os.Stderr, "Error: requires exactly one stack identifier argument.\n")

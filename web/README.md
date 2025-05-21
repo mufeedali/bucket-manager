@@ -1,47 +1,42 @@
-This is the web UI for Bucket Manager, built with:
+# Bucket Manager Web UI
+
+The web UI for Bucket Manager, providing a modern graphical interface to manage Podman Compose stacks. This React-based application is embedded into the Go binary at build time to create a single, self-contained executable that includes the entire web interface.
+
+## Technology Stack
 
 - [Next.js](https://nextjs.org) - React framework
 - [React.js](https://reactjs.org) - UI library
+- [Tailwind CSS](https://tailwindcss.com) - Utility-first CSS framework
 - [shadcn/ui](https://ui.shadcn.com/) - UI component library
 - [Bun](https://bun.sh) - JavaScript runtime & package manager
 
-The UI communicates with a Go REST backend to manage Podman Compose stacks.
-
-## Getting Started
-
-First, install dependencies:
+## Development
 
 ```bash
+# Install dependencies
 bun install
-```
 
-Then, run the development server:
-
-```bash
+# Start development server
 bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Integration with Go Backend
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The web UI is embedded into the Go binary during build:
 
-## Learn More
+When `just build-web` or `just install` is run:
+   - Web UI is built with `bun run build`
+   - Build output is copied to `internal/web/assets` in the main project
+   - Go binary embeds these assets and serves them via `bm serve` command
 
-To learn more about Next.js, take a look at the following resources:
+## Production Use
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Building for Production
-
-To build the web UI for production use:
+End users don't need to build the web UI separately. The complete web UI is embedded in the main `bm` binary and accessed by running:
 
 ```bash
-just install
+bm serve
 ```
 
-The web UI is accessed through the `bm serve` command which starts the Go backend server with this UI embedded.
+This starts a web server on port 8080 that serves both the UI and the API endpoints.

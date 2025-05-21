@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package runner's ssh.go file contains functions to execute commands on remote hosts
+// via SSH. It handles establishing connections, executing commands in the correct
+// directories, and streaming command output back to the client.
+
 package runner
 
 import (
@@ -18,9 +22,15 @@ import (
 )
 
 // runSSHCommand executes a command remotely via SSH.
-// It streams output based on the cliMode.
-// If cliMode is true, output goes directly to os.Stdout/Stderr.
-// If cliMode is false, output is sent line by line over outChan.
+// It handles the creation of SSH sessions, command execution, and output streaming.
+//
+// Parameters:
+//   - hostConfig: SSH host configuration for the remote connection
+//   - remoteCmdString: The command string to execute on the remote host
+//   - cmdDesc: Description of the command for error messages
+//   - cliMode: Whether to stream output directly to terminal or through channels
+//   - outChan: Channel for sending command output lines
+//   - errChan: Channel for sending execution errors
 func runSSHCommand(
 	hostConfig config.SSHHost,
 	remoteCmdString string,

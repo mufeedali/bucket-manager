@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package ui's update_handlers.go file implements state-specific keyboard and input handling
+// for the TUI. It contains methods that process user interactions like key presses, menu
+// selections, and form submissions for each different view state of the application.
+
 package ui
 
 import (
@@ -18,8 +22,27 @@ import (
 )
 
 // --- Update Handlers ---
-// These methods handle key presses and logic for specific UI states.
+// These methods handle key presses and input logic for specific UI states.
+// Each method corresponds to a different UI state and manages the state transitions,
+// keyboard shortcuts, and user interactions appropriate for that view.
 
+// handleStackListKeys processes keyboard input when in the main stack list view.
+// It handles navigation through the stack list, selection of stacks for batch operations,
+// triggering stack commands (up, down, pull), and switching to other views.
+//
+// Key handlers include:
+// - Up/Down/Home/End: Navigation through the stack list
+// - Space: Select/deselect a stack for batch operations
+// - Enter: View detailed information about the selected stack
+// - u/d/r/p: Shortcut keys for stack operations (up/down/refresh/pull)
+// - c: Switch to SSH configuration view
+// - q/Ctrl+C: Quit the application
+//
+// Parameters:
+//   - msg: The keyboard message containing the pressed key
+//
+// Returns:
+//   - []tea.Cmd: Commands to be executed by the Bubble Tea framework
 func (m *model) handleStackListKeys(msg tea.KeyMsg) []tea.Cmd {
 	var cmds []tea.Cmd
 	var vpCmd tea.Cmd
@@ -141,8 +164,19 @@ func (m *model) handleStackListKeys(msg tea.KeyMsg) []tea.Cmd {
 
 // --- Form Navigation and Styling Helpers ---
 
-// handleFormNavigation updates the formFocusIndex based on navigation keys.
-// focusMap lists the logical indices that are currently navigable.
+// handleFormNavigation manages keyboard-based navigation between form fields
+// in any form view. It supports moving focus up, down, or with Tab/Shift+Tab.
+//
+// The function uses a focus map which specifies the logical order and accessibility
+// of form fields. This allows for complex layouts where not all fields might be
+// visible or enabled based on the current form state.
+//
+// Parameters:
+//   - msg: The keyboard message containing the pressed key
+//   - focusMap: An ordered slice of logical field indices that are currently accessible
+//
+// Returns:
+//   - bool: True if navigation was handled (focus changed), false otherwise
 func (m *model) handleFormNavigation(msg tea.KeyMsg, focusMap []int) bool {
 	currentIndexInMap := -1
 	for i, logicalIndex := range focusMap {
@@ -541,8 +575,21 @@ func (m *model) handleSshImportDetailsFormKeys(msg tea.KeyMsg) []tea.Cmd {
 	return cmds
 }
 
-// runSequenceOnSelection determines which stacks to run a sequence on (selected or cursor)
-// and initiates the sequence execution.
+// runSequenceOnSelection prepares and initiates the execution of command sequences
+// on stacks. It handles both single-stack operations (using the cursor position) and
+// batch operations on multiple stacks (using the selection map).
+//
+// This function:
+// 1. Determines which stacks to operate on (selected or just cursor position)
+// 2. Creates a combined command sequence by applying the provided function to each stack
+// 3. Prepares the UI for sequence execution and output display
+// 4. Initiates the execution of the first command in the sequence
+//
+// Parameters:
+//   - sequenceFunc: A function that generates the appropriate command steps for a given stack
+//
+// Returns:
+//   - []tea.Cmd: Commands to be executed by the Bubble Tea framework
 func (m *model) runSequenceOnSelection(sequenceFunc func(discovery.Stack) []runner.CommandStep) []tea.Cmd {
 	var cmds []tea.Cmd
 	var stacksToRun []*discovery.Stack
@@ -598,7 +645,21 @@ func (m *model) runSequenceOnSelection(sequenceFunc func(discovery.Stack) []runn
 	return cmds
 }
 
-// startNextStepCmd prepares and returns the command to run the next step in the current sequence.
+// startNextStepCmd creates a command that will execute the next step in the
+// current command sequence. It handles sequential execution of multi-step
+// operations like starting, stopping, or pulling stacks.
+//
+// This function:
+// 1. Validates that a sequence exists and has remaining steps
+// 2. Retrieves the next step to execute
+// 3. Creates a command that will run the step and update the UI with output
+// 4. Manages sequence progress tracking
+//
+// The command created will update the output content with execution results
+// and will trigger subsequent steps when completed successfully.
+//
+// Returns:
+//   - tea.Cmd: A command that executes the next step in the sequence
 func (m *model) startNextStepCmd() tea.Cmd {
 	// Ensure there is a sequence and the index is valid
 	if m.currentSequence == nil || m.currentStepIndex >= len(m.currentSequence) {
@@ -616,6 +677,21 @@ func (m *model) startNextStepCmd() tea.Cmd {
 }
 
 // handleViewportKeys handles key presses when the main output viewport is active (e.g., during sequence execution).
+// handleViewportKeys processes keyboard input for views that use a viewport
+// for scrolling content, such as the sequence output view and stack details view.
+// It handles both scrolling controls and navigation to other views.
+//
+// This function handles:
+// - Up/Down/PgUp/PgDown: Scrolling the viewport content
+// - Enter/Esc/Back: Returning to the previous view
+// - q/Ctrl+C: Quitting the application
+//
+// Parameters:
+//   - msg: The keyboard message containing the pressed key
+//
+// Returns:
+//   - tea.Model: The updated model
+//   - tea.Cmd: Command to be executed by the Bubble Tea framework
 func (m *model) handleViewportKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	var vpCmd tea.Cmd
@@ -655,8 +731,24 @@ func (m *model) handleViewportKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...) // Return model and any viewport commands
 }
 
-// handleFormInputUpdates handles the update logic for text input fields within forms,
-// before state-specific key handling.
+// handleFormInputUpdates processes keyboard input for text input fields in forms.
+// It maps the logical focus index to the actual input field index and routes
+// input to the appropriate field.
+//
+// This function:
+// 1. Determines which input field is currently focused based on the application state
+// 2. Updates the focused input field with the keyboard input
+// 3. Handles special inputs like Enter for form submission
+//
+// The function supports different form layouts across various application states
+// (SSH host add/edit, import configuration, etc.) and maps the logical focus index
+// to the appropriate physical input field.
+//
+// Parameters:
+//   - msg: The keyboard message containing the pressed key
+//
+// Returns:
+//   - tea.Cmd: Command to be executed by the Bubble Tea framework
 func (m *model) handleFormInputUpdates(msg tea.KeyMsg) tea.Cmd {
 	var cmds []tea.Cmd
 	focusedInputIndex := -1 // Index within m.formInputs

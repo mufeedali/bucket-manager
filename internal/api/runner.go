@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2025 Mufeed Ali
+
+// Package api implements the HTTP API endpoints for the bucket manager's web interface.
+// The runner.go file specifically handles endpoints related to executing commands
+// on stacks and hosts, including both synchronous and streaming execution modes.
 package api
 
 import (
@@ -15,37 +21,46 @@ import (
 )
 
 // StackRunRequest represents the expected JSON body for stack runner endpoints.
+// It contains the information needed to identify a specific stack for operations.
 type StackRunRequest struct {
-	Name       string `json:"name"`
-	ServerName string `json:"serverName"`
+	Name       string `json:"name"`       // Name of the stack to operate on
+	ServerName string `json:"serverName"` // Server where the stack is located ("local" or SSH host name)
 }
 
 // HostRunRequest represents the expected JSON body for host runner endpoints.
+// It specifies which server should execute host-level operations like pruning.
 type HostRunRequest struct {
-	ServerName string `json:"serverName"`
+	ServerName string `json:"serverName"` // Server to run the command on ("local" or SSH host name)
 }
 
 // RunOutput represents the output of a command execution.
+// Used for returning command results in API responses.
 type RunOutput struct {
-	Output string `json:"output"`
-	Error  string `json:"error,omitempty"`
+	Output string `json:"output"`          // Standard output from the command
+	Error  string `json:"error,omitempty"` // Error output if the command failed
 }
 
 // RegisterRunnerRoutes registers the API routes for running commands and actions.
+// These include both synchronous (POST) and streaming (GET) endpoints for
+// various stack and host operations.
 func RegisterRunnerRoutes(router *mux.Router) {
+	// Synchronous stack operation endpoints (return output all at once)
 	router.HandleFunc("/api/run/stack/up", runStackUpHandler).Methods("POST")
 	router.HandleFunc("/api/run/stack/pull", runStackPullHandler).Methods("POST")
 	router.HandleFunc("/api/run/stack/down", runStackDownHandler).Methods("POST")
 	router.HandleFunc("/api/run/stack/refresh", runStackRefreshHandler).Methods("POST")
 
-	// Streaming endpoints
+	// Streaming endpoints (return output as it's generated using Server-Sent Events)
 	router.HandleFunc("/api/run/stack/refresh/stream", streamStackRefreshHandler).Methods("GET")
 	router.HandleFunc("/api/run/stack/up/stream", streamStackUpHandler).Methods("GET")
 	router.HandleFunc("/api/run/stack/down/stream", streamStackDownHandler).Methods("GET")
 	router.HandleFunc("/api/run/stack/pull/stream", streamStackPullHandler).Methods("GET")
 
+	// Host-level operation endpoints
 	router.HandleFunc("/api/run/host/prune", runHostPruneHandler).Methods("POST")
 	// TODO: Add routes for running arbitrary commands or sequences
+	//  - POST /api/run/stack/custom for executing custom sequences on stacks
+	//  - POST /api/run/host/custom for executing arbitrary commands on hosts
 }
 
 // getStackFromRequest reads the request body and retrieves the corresponding discovery.Stack.
@@ -74,40 +89,8 @@ func getStackFromRequest(r *http.Request) (discovery.Stack, error) {
 			IsRemote:   false,
 		}, nil
 	} else {
-		// For remote stacks, find the host config
-		cfg, err := config.LoadConfig()
-		if err != nil {
-			return discovery.Stack{}, fmt.Errorf("error loading config: %w", err)
-		}
-
-		var targetHost *config.SSHHost
-		for i := range cfg.SSHHosts {
-			if cfg.SSHHosts[i].Name == req.ServerName {
-				targetHost = &cfg.SSHHosts[i]
-				break
-			}
-		}
-
-		if targetHost == nil {
-			return discovery.Stack{}, fmt.Errorf("SSH host '%s' not found", req.ServerName)
-		}
-
-		// We need the remote stack's path and absolute remote root.
-		// This information is available during discovery.
-		// A better approach might be to pass the full Stack object from the frontend,
-		// or have a backend endpoint to get a single stack's details.
-		// For now, let's create a dummy remote stack with minimal info needed by runner.
-		// This is a simplification and might need refinement.
-		return discovery.Stack{
-			Name:       req.Name,
-			ServerName: req.ServerName,
-			IsRemote:   true,
-			HostConfig: targetHost,
-			// Path and AbsoluteRemoteRoot are needed by runner.StreamCommand
-			// We might need to fetch the stack details first or pass them from frontend.
-			// Let's assume for now that runner can work with just Name, ServerName, and HostConfig for remote.
-			// This is a potential area for future improvement.
-		}, nil
+		// Get complete remote stack with AbsoluteRemoteRoot properly populated
+		return findRemoteStackByNameAndServer(req.Name, req.ServerName)
 	}
 }
 
@@ -150,6 +133,20 @@ func getHostTargetFromRequest(r *http.Request) (runner.HostTarget, error) {
 }
 
 // runStackSequence streams the output of a given stack command sequence using Server-Sent Events.
+// runStackSequence executes a sequence of commands and streams the output
+// to the client using Server-Sent Events (SSE). This function is used by
+// all streaming API endpoints to provide real-time command execution updates.
+//
+// The function:
+// 1. Sets up proper headers for SSE communication
+// 2. Executes each command in the sequence sequentially
+// 3. Streams command outputs, errors, and step transitions as events
+// 4. Handles flushing the response buffer to ensure timely updates
+// 5. Terminates the stream when all commands complete or an error occurs
+//
+// Parameters:
+//   - w: HTTP response writer to send the SSE stream
+//   - sequence: Ordered list of commands to execute
 func runStackSequence(w http.ResponseWriter, sequence []runner.CommandStep) {
 	// Set headers for Server-Sent Events
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -299,6 +296,22 @@ func runStackRefreshHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // streamStackRefreshHandler handles GET requests to stream the 'refresh' sequence output on a stack.
+// streamStackRefreshHandler serves the GET /api/stream/stack/refresh endpoint, which
+// streams real-time output from the `podman-compose ps` command to check stack status.
+//
+// This handler uses Server-Sent Events (SSE) to provide a continuous stream of
+// command execution updates to the client, including command output and error messages.
+// The connection remains open until the command completes or an error occurs.
+//
+// Query Parameters:
+// - name: The name of the stack to refresh
+// - serverName: The server name where the stack is located ("local" or an SSH host name)
+//
+// Response:
+// - 200 OK with text/event-stream content type for successful connections
+// - 400 Bad Request if required parameters are missing
+// - 404 Not Found if the stack or host doesn't exist
+// - 500 Internal Server Error if command execution fails
 func streamStackRefreshHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	stackName := query.Get("name")
@@ -326,39 +339,41 @@ func streamStackRefreshHandler(w http.ResponseWriter, r *http.Request) {
 			IsRemote:   false,
 		}
 	} else {
-		cfg, err := config.LoadConfig()
+		// Get complete remote stack with AbsoluteRemoteRoot properly populated
+		completeStack, err := findRemoteStackByNameAndServer(stackName, serverName)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Error loading config: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Error finding stack: %v", err), http.StatusNotFound)
 			return
 		}
 
-		var targetHost *config.SSHHost
-		for i := range cfg.SSHHosts {
-			if cfg.SSHHosts[i].Name == serverName {
-				targetHost = &cfg.SSHHosts[i]
-				break
-			}
-		}
-
-		if targetHost == nil {
-			http.Error(w, fmt.Sprintf("SSH host '%s' not found", serverName), http.StatusBadRequest)
-			return
-		}
-
-		// Assuming runner.StreamCommand can work with just Name, ServerName, and HostConfig for remote
-		stack = discovery.Stack{
-			Name:       stackName,
-			ServerName: serverName,
-			IsRemote:   true,
-			HostConfig: targetHost,
-		}
+		stack = completeStack
 	}
 
 	sequence := runner.RefreshSequence(stack)
 	runStackSequence(w, sequence) // Stream output
 }
 
-// streamStackUpHandler handles GET requests to stream the 'up' sequence output on a stack.
+// streamStackUpHandler serves the GET /api/stream/stack/up endpoint, which
+// streams real-time output from the sequence of commands used to start a stack.
+//
+// This handler uses Server-Sent Events (SSE) to provide a continuous stream of
+// command execution updates to the client as the stack is being started. The stream
+// includes all output from `podman-compose up -d` and any related commands.
+//
+// The connection remains open until:
+// - All commands complete successfully
+// - An error occurs during execution
+// - The client disconnects
+//
+// Query Parameters:
+// - name: The name of the stack to start
+// - serverName: The server name where the stack is located ("local" or an SSH host name)
+//
+// Response:
+// - 200 OK with text/event-stream content type for successful connections
+// - 400 Bad Request if required parameters are missing
+// - 404 Not Found if the stack or host doesn't exist
+// - 500 Internal Server Error if command execution fails
 func streamStackUpHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	stackName := query.Get("name")
@@ -386,31 +401,14 @@ func streamStackUpHandler(w http.ResponseWriter, r *http.Request) {
 			IsRemote:   false,
 		}
 	} else {
-		cfg, err := config.LoadConfig()
+		// Get complete remote stack with AbsoluteRemoteRoot properly populated
+		completeStack, err := findRemoteStackByNameAndServer(stackName, serverName)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Error loading config: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Error finding stack: %v", err), http.StatusNotFound)
 			return
 		}
 
-		var targetHost *config.SSHHost
-		for i := range cfg.SSHHosts {
-			if cfg.SSHHosts[i].Name == serverName {
-				targetHost = &cfg.SSHHosts[i]
-				break
-			}
-		}
-
-		if targetHost == nil {
-			http.Error(w, fmt.Sprintf("SSH host '%s' not found", serverName), http.StatusBadRequest)
-			return
-		}
-
-		stack = discovery.Stack{
-			Name:       stackName,
-			ServerName: serverName,
-			IsRemote:   true,
-			HostConfig: targetHost,
-		}
+		stack = completeStack
 	}
 
 	sequence := runner.UpSequence(stack)
@@ -418,6 +416,27 @@ func streamStackUpHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // streamStackDownHandler handles GET requests to stream the 'down' sequence output on a stack.
+// streamStackDownHandler serves the GET /api/stream/stack/down endpoint, which
+// streams real-time output from the sequence of commands used to stop a stack.
+//
+// This handler uses Server-Sent Events (SSE) to provide a continuous stream of
+// command execution updates to the client as the stack is being stopped. The stream
+// includes all output from `podman-compose down` and any related commands.
+//
+// The connection remains open until:
+// - All commands complete successfully
+// - An error occurs during execution
+// - The client disconnects
+//
+// Query Parameters:
+// - name: The name of the stack to stop
+// - serverName: The server name where the stack is located ("local" or an SSH host name)
+//
+// Response:
+// - 200 OK with text/event-stream content type for successful connections
+// - 400 Bad Request if required parameters are missing
+// - 404 Not Found if the stack or host doesn't exist
+// - 500 Internal Server Error if command execution fails
 func streamStackDownHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	stackName := query.Get("name")
@@ -445,31 +464,14 @@ func streamStackDownHandler(w http.ResponseWriter, r *http.Request) {
 			IsRemote:   false,
 		}
 	} else {
-		cfg, err := config.LoadConfig()
+		// Get complete remote stack with AbsoluteRemoteRoot properly populated
+		completeStack, err := findRemoteStackByNameAndServer(stackName, serverName)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Error loading config: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Error finding stack: %v", err), http.StatusNotFound)
 			return
 		}
 
-		var targetHost *config.SSHHost
-		for i := range cfg.SSHHosts {
-			if cfg.SSHHosts[i].Name == serverName {
-				targetHost = &cfg.SSHHosts[i]
-				break
-			}
-		}
-
-		if targetHost == nil {
-			http.Error(w, fmt.Sprintf("SSH host '%s' not found", serverName), http.StatusBadRequest)
-			return
-		}
-
-		stack = discovery.Stack{
-			Name:       stackName,
-			ServerName: serverName,
-			IsRemote:   true,
-			HostConfig: targetHost,
-		}
+		stack = completeStack
 	}
 
 	sequence := runner.DownSequence(stack)
@@ -477,6 +479,28 @@ func streamStackDownHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // streamStackPullHandler handles GET requests to stream the 'pull' sequence output on a stack.
+// streamStackPullHandler serves the GET /api/stream/stack/pull endpoint, which
+// streams real-time output from the sequence of commands used to pull updated
+// container images for a stack.
+//
+// This handler uses Server-Sent Events (SSE) to provide a continuous stream of
+// command execution updates to the client as images are being pulled. The stream
+// includes all output from `podman-compose pull` and any related commands.
+//
+// The connection remains open until:
+// - All commands complete successfully
+// - An error occurs during execution
+// - The client disconnects
+//
+// Query Parameters:
+// - name: The name of the stack to pull images for
+// - serverName: The server name where the stack is located ("local" or an SSH host name)
+//
+// Response:
+// - 200 OK with text/event-stream content type for successful connections
+// - 400 Bad Request if required parameters are missing
+// - 404 Not Found if the stack or host doesn't exist
+// - 500 Internal Server Error if command execution fails
 func streamStackPullHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	stackName := query.Get("name")
@@ -504,31 +528,14 @@ func streamStackPullHandler(w http.ResponseWriter, r *http.Request) {
 			IsRemote:   false,
 		}
 	} else {
-		cfg, err := config.LoadConfig()
+		// Get complete remote stack with AbsoluteRemoteRoot properly populated
+		completeStack, err := findRemoteStackByNameAndServer(stackName, serverName)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Error loading config: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Error finding stack: %v", err), http.StatusNotFound)
 			return
 		}
 
-		var targetHost *config.SSHHost
-		for i := range cfg.SSHHosts {
-			if cfg.SSHHosts[i].Name == serverName {
-				targetHost = &cfg.SSHHosts[i]
-				break
-			}
-		}
-
-		if targetHost == nil {
-			http.Error(w, fmt.Sprintf("SSH host '%s' not found", serverName), http.StatusBadRequest)
-			return
-		}
-
-		stack = discovery.Stack{
-			Name:       stackName,
-			ServerName: serverName,
-			IsRemote:   true,
-			HostConfig: targetHost,
-		}
+		stack = completeStack
 	}
 
 	sequence := runner.PullSequence(stack)
@@ -536,6 +543,22 @@ func streamStackPullHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // runHostPruneHandler handles requests to run the 'prune' action on a host.
+// runHostPruneHandler serves the POST /api/host/prune endpoint, which executes
+// the podman system prune command on a host to clean up unused resources.
+//
+// This handler runs the prune command on either the local system or a remote SSH host
+// to remove unused containers, networks, images, and volumes. The output of the command
+// is returned in the response.
+//
+// Request Body (JSON):
+// - serverName: The name of the server to prune ("local" or an SSH host name)
+// - pruneVolumes: Boolean flag indicating whether to prune volumes as well (optional)
+//
+// Response:
+// - 200 OK with JSON containing command output and success status
+// - 400 Bad Request if the serverName is missing or invalid
+// - 404 Not Found if the host doesn't exist
+// - 500 Internal Server Error if command execution fails
 func runHostPruneHandler(w http.ResponseWriter, r *http.Request) {
 	target, err := getHostTargetFromRequest(r)
 	if err != nil {
@@ -548,3 +571,5 @@ func runHostPruneHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // TODO: Implement handlers for running arbitrary commands or sequences.
+// These handlers should accept JSON payloads with custom command sequences
+// and execute them in the same way as the predefined operations.

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package ui's forms.go file implements form creation and validation for the
+// interactive text-based forms in the TUI. This includes forms for adding and
+// editing SSH hosts, configuring authentication methods, and validating user input.
+
 package ui
 
 import (
@@ -12,12 +16,17 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 )
 
-// --- Form Creation ---
+// --- Form Creation Functions ---
+// These functions create text input fields for the various forms in the TUI
 
+// createAddForm creates the text input fields for adding a new SSH host.
+// The form includes fields for host name, hostname/IP, username, port,
+// remote root directory, and authentication details.
 func createAddForm() []textinput.Model {
 	inputs := make([]textinput.Model, 7)
 	var t textinput.Model
 
+	// First field is the unique identifier name for the host
 	t = textinput.New()
 	t.Placeholder = "Unique Name (e.g., server1)"
 	t.Focus()

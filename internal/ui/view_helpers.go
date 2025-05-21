@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package ui's view_helpers.go file implements the rendering logic for the TUI.
+// It contains methods that generate the visual representation of each UI state,
+// format data for display, and manage the layout of UI elements on screen.
+
 package ui
 
 import (
@@ -12,11 +16,19 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// --- View Helpers ---
+// --- View Helper Methods ---
+// These methods generate specific UI components and format data for display
 
 // renderStackStatus appends the detailed status view for a given stack ID
 // to the provided strings.Builder. It uses the status information stored
 // in the model's stackStatuses and loadingStatus maps.
+//
+// It formats the status with appropriate colors based on the stack's state:
+// - Green for UP (all containers running)
+// - Yellow for PARTIAL (some containers running, some not)
+// - Red for DOWN (no containers running)
+// - Magenta for ERROR (error determining status)
+// - Gray for LOADING or unknown states
 func (m *model) renderStackStatus(b *strings.Builder, stackID string) {
 	statusStr := ""
 	statusInfo, loaded := m.stackStatuses[stackID]
@@ -83,12 +95,30 @@ func (m *model) renderStackStatus(b *strings.Builder, stackID string) {
 // These functions generate the body and footer content for specific UI states.
 // The main View() method combines these with the header and manages viewport heights.
 
+// renderLoadingView generates the simple loading screen that is displayed
+// while the application is fetching stack data from local or remote sources.
+//
+// Returns:
+//   - string: The body content showing a loading message
+//   - string: The footer content with just the quit key help
 func (m *model) renderLoadingView() (string, string) {
 	body := statusStyle.Render("Loading stacks...")
 	footer := footerKeyStyle.Render(m.keymap.Quit.Help().Key) + footerDescStyle.Render(": "+m.keymap.Quit.Help().Desc)
 	return body, footer
 }
 
+// renderStackListView generates the main stack selection screen that displays
+// all available stacks across all configured hosts. This is the primary navigation
+// view from which users can select stacks to view details or perform operations.
+//
+// The view includes:
+// - A list of all stacks with their location (local or remote host)
+// - Visual indication of the currently selected stack
+// - Status indicators for each stack (if statuses have been loaded)
+//
+// Returns:
+//   - string: The body content showing the stack list
+//   - string: The footer content with navigation and action key help
 func (m *model) renderStackListView() (string, string) {
 	bodyContent := strings.Builder{}
 	bodyContent.WriteString("Select a stack:\n")
@@ -160,6 +190,19 @@ func (m *model) renderStackListView() (string, string) {
 	return bodyContent.String(), footerContent.String()
 }
 
+// renderRunningSequenceView generates the view that is displayed while a command
+// sequence (up, down, pull, etc.) is actively running. It shows real-time command
+// output and execution progress for the selected stack.
+//
+// This view:
+// - Displays raw command output as it's generated
+// - Shows the current step being executed in the command sequence
+// - Indicates which stack the operation is being performed on
+// - Provides a cancel option via keyboard shortcut
+//
+// Returns:
+//   - string: The body content showing raw command output
+//   - string: The footer content with progress information and cancel option
 func (m *model) renderRunningSequenceView() (string, string) {
 	bodyStr := m.outputContent // Use the raw content for setting viewport
 
@@ -186,6 +229,18 @@ func (m *model) renderRunningSequenceView() (string, string) {
 	return bodyStr, footerContent.String()
 }
 
+// renderSequenceErrorView generates the view shown when a command sequence
+// encounters an error. It displays the error message and output leading up to the failure.
+//
+// This view:
+// - Shows the full command output including error messages
+// - Highlights the error that occurred during execution
+// - Identifies which stack encountered the error
+// - Provides navigation options to return to the stack list
+//
+// Returns:
+//   - string: The body content showing command output up to the error
+//   - string: The footer content with error details and navigation options
 func (m *model) renderSequenceErrorView() (string, string) {
 	bodyStr := m.outputContent // Use the raw content
 
@@ -210,6 +265,20 @@ func (m *model) renderSequenceErrorView() (string, string) {
 	return bodyStr, footerContent.String()
 }
 
+// renderStackDetailsView generates a detailed view for either a single stack or
+// multiple selected stacks. For a single stack, it shows comprehensive information
+// including status and available actions. For multiple stacks, it provides batch
+// operation options.
+//
+// This view displays:
+// - Stack name, location (local or remote host), and directory path
+// - Current status of the stack and its containers (when viewing single stack)
+// - Available actions that can be performed on the stack(s)
+// - For multi-stack selection, a list of all selected stacks
+//
+// Returns:
+//   - string: The body content showing stack details and status
+//   - string: The footer content with available actions and navigation options
 func (m *model) renderStackDetailsView() (string, string) {
 	bodyContent := strings.Builder{}
 	if m.detailedStack != nil {
@@ -243,6 +312,19 @@ func (m *model) renderStackDetailsView() (string, string) {
 	return bodyContent.String(), footerContent.String()
 }
 
+// renderSshConfigListView generates the view that displays all configured SSH hosts
+// and provides options for managing them. This is the main SSH configuration screen
+// that users interact with when adding, editing, or removing remote hosts.
+//
+// This view displays:
+// - A list of all configured SSH hosts with connection details
+// - Remote root paths for each host (if configured)
+// - Host status (enabled/disabled)
+// - Options to add, edit, remove, import from ~/.ssh/config, or prune unused hosts
+//
+// Returns:
+//   - string: The body content showing the list of SSH hosts
+//   - string: The footer content with host management options
 func (m *model) renderSshConfigListView() (string, string) {
 	bodyContent := strings.Builder{}
 	bodyContent.WriteString("Configured Hosts:\n\n")
@@ -318,6 +400,18 @@ func (m *model) renderSshConfigListView() (string, string) {
 	return bodyContent.String(), footerContent.String()
 }
 
+// renderSshConfigRemoveConfirmView generates a confirmation dialog for removing
+// an SSH host from the configuration. It requests user confirmation before
+// deleting the host to prevent accidental removals.
+//
+// This view displays:
+// - The name and connection details of the host to be removed
+// - A clear warning about the irreversible nature of the action
+// - Buttons to confirm or cancel the removal operation
+//
+// Returns:
+//   - string: The body content showing the confirmation request
+//   - string: The footer content with confirm/cancel options
 func (m *model) renderSshConfigRemoveConfirmView() (string, string) {
 	bodyContent := strings.Builder{}
 	if m.hostToRemove != nil {
@@ -343,6 +437,18 @@ func (m *model) renderSshConfigRemoveConfirmView() (string, string) {
 	return bodyContent.String(), footerContent.String()
 }
 
+// renderPruneConfirmView generates a confirmation dialog for pruning unused SSH hosts
+// from the configuration. It shows which hosts will be removed (those with no stacks)
+// and requests confirmation before proceeding.
+//
+// This view displays:
+// - A list of hosts that will be removed (those without any associated stacks)
+// - A warning about the irreversibility of the action
+// - Options to confirm or cancel the pruning operation
+//
+// Returns:
+//   - string: The body content showing hosts to be pruned and confirmation request
+//   - string: The footer content with confirm/cancel options
 func (m *model) renderPruneConfirmView() (string, string) {
 	bodyContent := strings.Builder{}
 	if len(m.hostsToPrune) > 0 {
@@ -370,6 +476,18 @@ func (m *model) renderPruneConfirmView() (string, string) {
 	return bodyContent.String(), footerContent.String()
 }
 
+// renderRunningHostActionView generates a view for displaying the output of
+// an SSH host action, such as testing a connection or validating configuration.
+// It shows the command output in real-time as it's executed.
+//
+// This view displays:
+// - Command output from the SSH operation being performed
+// - Status information about the action in progress
+// - Options to return to the SSH configuration screen
+//
+// Returns:
+//   - string: The body content showing raw command output
+//   - string: The footer content with action status and navigation options
 func (m *model) renderRunningHostActionView() (string, string) {
 	bodyStr := m.outputContent
 
@@ -393,6 +511,19 @@ func (m *model) renderRunningHostActionView() (string, string) {
 	return bodyStr, footerContent.String()
 }
 
+// renderSshConfigAddFormView generates the form view for adding a new SSH host
+// to the configuration. It provides input fields for all required and optional
+// SSH connection parameters.
+//
+// This view displays:
+// - Input fields for host name, hostname, port, username, and remote root
+// - Authentication method selection (SSH key, SSH agent, or password)
+// - Additional fields based on the selected auth method
+// - Form validation errors when applicable
+//
+// Returns:
+//   - string: The body content showing the add host form
+//   - string: The footer content with form navigation and submission options
 func (m *model) renderSshConfigAddFormView() (string, string) {
 	bodyContent := strings.Builder{}
 	bodyContent.WriteString(titleStyle.Render("Add New SSH Host") + "\n\n")
@@ -442,6 +573,20 @@ func (m *model) renderSshConfigAddFormView() (string, string) {
 	return bodyContent.String(), footerContent.String()
 }
 
+// renderSshConfigEditFormView generates the form view for editing an existing SSH host
+// in the configuration. It pre-fills all fields with the current values and
+// allows the user to modify any parameter.
+//
+// This view displays:
+// - Input fields pre-filled with the host's current configuration
+// - Authentication method selection with the current method pre-selected
+// - Additional fields based on the selected auth method
+// - Form validation errors when applicable
+// - Option to enable/disable the host without removing it
+//
+// Returns:
+//   - string: The body content showing the edit host form
+//   - string: The footer content with form navigation and submission options
 func (m *model) renderSshConfigEditFormView() (string, string) {
 	bodyContent := strings.Builder{}
 	if m.hostToEdit == nil {
@@ -509,6 +654,19 @@ func (m *model) renderSshConfigEditFormView() (string, string) {
 	return bodyContent.String(), footerContent.String()
 }
 
+// renderSshConfigImportSelectView generates the view for selecting hosts to import
+// from the user's SSH config file (~/.ssh/config). It allows users to select
+// multiple hosts for batch import.
+//
+// This view displays:
+// - A list of all importable hosts found in ~/.ssh/config
+// - Details about each host including alias, connection information, and key path
+// - Checkboxes for selecting which hosts to import
+// - Information about hosts that are already imported (not shown in the list)
+//
+// Returns:
+//   - string: The body content showing the selectable hosts
+//   - string: The footer content with selection and confirmation options
 func (m *model) renderSshConfigImportSelectView() (string, string) {
 	bodyContent := strings.Builder{}
 	bodyContent.WriteString(titleStyle.Render("Select Hosts to Import from ~/.ssh/config") + "\n\n")
@@ -552,6 +710,22 @@ func (m *model) renderSshConfigImportSelectView() (string, string) {
 	return bodyContent.String(), footerContent.String()
 }
 
+// renderSshConfigImportDetailsView generates the view for configuring additional
+// details for each selected host during the SSH config import process. It allows
+// users to provide information that might be missing from ~/.ssh/config.
+//
+// This view displays:
+// - The host being configured (name and connection details)
+// - Input field for the remote root path (where stacks will be searched)
+// - Authentication method selection if not specified in ~/.ssh/config
+// - Additional fields based on the selected auth method
+// - Form validation errors when applicable
+//
+// The view processes hosts sequentially, allowing configuration of each selected host.
+//
+// Returns:
+//   - string: The body content showing the host configuration form
+//   - string: The footer content with form navigation and progress information
 func (m *model) renderSshConfigImportDetailsView() (string, string) {
 	bodyContent := strings.Builder{}
 	if len(m.importableHosts) == 0 || m.configuringHostIdx >= len(m.importableHosts) || m.configuringHostIdx < 0 {

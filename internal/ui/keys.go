@@ -1,43 +1,53 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// This file defines the keyboard bindings for the TUI application.
+// It maps keys to actions and provides descriptions for the help menu.
+
 package ui
 
 import "github.com/charmbracelet/bubbles/key"
 
 // KeyMap defines the keybindings for the application.
+// These bindings are used throughout the TUI for navigation and actions.
 type KeyMap struct {
-	Up       key.Binding
-	Down     key.Binding
-	Left     key.Binding
-	Right    key.Binding
-	PgUp     key.Binding
-	PgDown   key.Binding
-	Home     key.Binding
-	End      key.Binding
-	Quit     key.Binding
-	Enter    key.Binding
-	Esc      key.Binding
-	Back     key.Binding
-	Select   key.Binding
-	Tab      key.Binding
-	ShiftTab key.Binding
-	Yes      key.Binding
-	No       key.Binding
+	// Navigation keys
+	Up     key.Binding // Move cursor up
+	Down   key.Binding // Move cursor down
+	Left   key.Binding // Move cursor left/previous screen
+	Right  key.Binding // Move cursor right/next screen
+	PgUp   key.Binding // Page up in lists
+	PgDown key.Binding // Page down in lists
+	Home   key.Binding // Jump to top of list
+	End    key.Binding // Jump to bottom of list
 
-	Config        key.Binding
-	UpAction      key.Binding
-	DownAction    key.Binding
-	RefreshAction key.Binding
-	PullAction    key.Binding
+	// General UI control
+	Quit     key.Binding // Exit the application
+	Enter    key.Binding // Confirm selection
+	Esc      key.Binding // Cancel/go back
+	Back     key.Binding // Go back to previous view
+	Select   key.Binding // Select an item
+	Tab      key.Binding // Next field in forms
+	ShiftTab key.Binding // Previous field in forms
+	Yes      key.Binding // Confirm in prompts
+	No       key.Binding // Deny in prompts
 
-	Remove key.Binding
-	Add    key.Binding
-	Import key.Binding
-	Edit   key.Binding
+	// Stack management actions
+	Config        key.Binding // Access configuration menu
+	UpAction      key.Binding // Start/up the selected stack(s)
+	DownAction    key.Binding // Stop/down the selected stack(s)
+	RefreshAction key.Binding // Restart the selected stack(s)
+	PullAction    key.Binding // Pull images for the selected stack(s)
 
-	ToggleDisabled key.Binding
-	PruneAction    key.Binding
+	// Host/SSH configuration actions
+	Remove key.Binding // Remove an item (SSH host)
+	Add    key.Binding // Add a new item (SSH host)
+	Import key.Binding // Import from SSH config
+	Edit   key.Binding // Edit an item (SSH host)
+
+	// Misc actions
+	ToggleDisabled key.Binding // Toggle disabled state for a host
+	PruneAction    key.Binding // Prune containers/images
 }
 
 // DefaultKeyMap provides the default keybindings.

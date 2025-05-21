@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package runner's local.go file implements functions for executing commands
+// on the local system. This includes running podman compose commands within stack
+// directories and system-level commands like prune operations.
+
 package runner
 
 import (
@@ -10,10 +14,17 @@ import (
 	"syscall"
 )
 
-// runLocalCommand executes a command locally.
-// It streams output based on the cliMode.
-// If cliMode is true, output goes directly to os.Stdout/Stderr.
-// If cliMode is false, output is sent line by line over outChan.
+// runLocalCommand executes a command locally on the host system.
+// It provides two output modes based on the cliMode parameter:
+// - If cliMode is true: output is sent directly to os.Stdout/Stderr (terminal)
+// - If cliMode is false: output is captured and sent through channels for TUI/API use
+//
+// Parameters:
+//   - cmd: The prepared exec.Cmd to execute
+//   - cmdDesc: Description of the command for error messages
+//   - cliMode: Whether to use direct terminal output or channel-based output
+//   - outChan: Channel to send command output lines
+//   - errChan: Channel to send execution errors
 func runLocalCommand(cmd *exec.Cmd, cmdDesc string, cliMode bool, outChan chan<- OutputLine, errChan chan<- error) {
 	var cmdErr error
 	if cliMode {

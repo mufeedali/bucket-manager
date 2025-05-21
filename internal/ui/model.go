@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package ui implements the Text User Interface components using the Bubble Tea framework.
+// It defines the TUI model, views, update logic, and event handling for navigating
+// and managing Podman Compose stacks interactively in the terminal.
 package ui
 
 import (
@@ -23,12 +26,15 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
+// BubbleProgram is the global Bubble Tea program instance
+// It's exposed to allow sending messages from outside the UI package
 var BubbleProgram *tea.Program
 
+// model represents the TUI application state
 type model struct {
-	keymap               KeyMap
-	stacks               []discovery.Stack
-	cursor               int
+	keymap               KeyMap            // Keyboard shortcuts configuration
+	stacks               []discovery.Stack // List of discovered Podman Compose stacks
+	cursor               int               // Current cursor position in the stack list
 	selectedStackIdxs    map[int]struct{}
 	configCursor         int
 	hostToRemove         *config.SSHHost
@@ -485,7 +491,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Clear any errors that might have occurred during the aborted discovery
 				m.lastError = nil
 				m.discoveryErrors = nil
-				// TODO: Implement cancellation for the background findStacksCmd if possible
+				// TODO: Implement cancellation for the background findStacksCmd:
+				//  - Create a context with cancellation in the initial cmd
+				//  - Pass the cancel function to the model state
+				//  - Call the cancel function here to stop running goroutines
+				//  - Modify the discovery package to respect context cancellation
 			}
 		case stateStackList:
 			switch {

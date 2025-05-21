@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package runner provides functionality for executing commands on local and remote hosts.
+// It handles command execution, output streaming, and error handling for Podman Compose
+// operations across both local and SSH-connected remote environments.
 package runner
 
 import (
@@ -20,7 +23,9 @@ import (
 	"strings"
 )
 
-var sshManager *ssh.Manager // Keep sshManager here as it's used by ssh.go
+// sshManager is a package-level reference to the SSH connection manager
+// Used by both runner.go and ssh.go to access SSH connections
+var sshManager *ssh.Manager
 
 // InitSSHManager sets the package-level SSH manager instance.
 func InitSSHManager(manager *ssh.Manager) {
@@ -30,16 +35,20 @@ func InitSSHManager(manager *ssh.Manager) {
 	sshManager = manager
 }
 
+// CommandStep represents a single command to be executed within a stack's directory
+// Used for operations like 'podman compose up', 'podman compose down', etc.
 type CommandStep struct {
-	Name    string
-	Command string
-	Args    []string
-	Stack   discovery.Stack
+	Name    string          // User-friendly name/description of the command
+	Command string          // The executable command (e.g., 'podman')
+	Args    []string        // Command arguments (e.g., ['compose', 'up', '-d'])
+	Stack   discovery.Stack // The target stack where the command will be executed
 }
 
+// OutputLine represents a single line of command output with its source indicator
+// Used to differentiate between stdout and stderr when presenting command output
 type OutputLine struct {
-	Line    string
-	IsError bool // True if the line came from stderr
+	Line    string // The actual output text
+	IsError bool   // True if the line came from stderr, false if from stdout
 }
 
 // HostTarget defines the target for a host-level command (local or a specific remote).

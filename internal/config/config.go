@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package config handles application configuration including reading and writing
+// configuration files, managing SSH host definitions, and providing access to
+// application settings.
 package config
 
 import (
@@ -13,20 +16,41 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// SSHHost represents a remote SSH host configuration for connecting to
+// and managing remote Podman Compose stacks.
 type SSHHost struct {
-	Name       string `yaml:"name"`
-	Hostname   string `yaml:"hostname"`
-	User       string `yaml:"user"`
-	Port       int    `yaml:"port,omitempty"`
-	KeyPath    string `yaml:"key_path,omitempty"`
-	Password   string `yaml:"password,omitempty"` // Optional password (plaintext, discouraged)
+	// Name is the unique identifier for this host configuration
+	Name string `yaml:"name"`
+
+	// Hostname is the server address (IP or domain)
+	Hostname string `yaml:"hostname"`
+
+	// User is the SSH username for authentication
+	User string `yaml:"user"`
+
+	// Port is the SSH port number (optional, defaults to standard SSH port)
+	Port int `yaml:"port,omitempty"`
+
+	// KeyPath is the path to the SSH private key file
+	KeyPath string `yaml:"key_path,omitempty"`
+
+	// Password is an optional authentication method (plaintext, discouraged)
+	Password string `yaml:"password,omitempty"`
+
+	// RemoteRoot is the directory path to search for stacks on the remote host
 	RemoteRoot string `yaml:"remote_root,omitempty"`
-	Disabled   bool   `yaml:"disabled,omitempty"`
+
+	// Disabled indicates whether this host should be skipped during discovery
+	Disabled bool `yaml:"disabled,omitempty"`
 }
 
+// Config represents the top-level application configuration
 type Config struct {
-	LocalRoot string    `yaml:"local_root,omitempty"`
-	SSHHosts  []SSHHost `yaml:"ssh_hosts"`
+	// LocalRoot is the custom directory to search for stacks locally (optional)
+	LocalRoot string `yaml:"local_root,omitempty"`
+
+	// SSHHosts is a list of remote SSH host configurations
+	SSHHosts []SSHHost `yaml:"ssh_hosts"`
 }
 
 func DefaultConfigPath() (string, error) {

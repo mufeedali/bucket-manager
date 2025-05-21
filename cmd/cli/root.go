@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
+// Package cli implements the command-line interface for the bucket manager.
+// It provides subcommands for managing stacks, SSH configurations, and
+// executing operations on both local and remote Podman Compose stacks.
 package cli
 
 import (
@@ -20,19 +23,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Package-level variables for CLI operation
 var (
-	sshManager         *ssh.Manager
-	statusColor        = color.New(color.FgCyan)
-	errorColor         = color.New(color.FgRed)
-	stepColor          = color.New(color.FgYellow)
-	successColor       = color.New(color.FgGreen)
-	statusUpColor      = color.New(color.FgGreen)
-	statusDownColor    = color.New(color.FgRed)
-	statusPartialColor = color.New(color.FgYellow)
+	// sshManager handles SSH connections to remote hosts
+	sshManager *ssh.Manager
+
+	// Color definitions for consistent CLI output formatting
+	statusColor  = color.New(color.FgCyan)   // For status messages
+	errorColor   = color.New(color.FgRed)    // For error messages
+	stepColor    = color.New(color.FgYellow) // For step indicators
+	successColor = color.New(color.FgGreen)  // For success messages
+
+	// Colors for stack status indicators
+	statusUpColor      = color.New(color.FgGreen)  // For "up" status
+	statusDownColor    = color.New(color.FgRed)    // For "down" status
+	statusPartialColor = color.New(color.FgYellow) // For "partial" status
 	statusErrorColor   = color.New(color.FgMagenta)
 	identifierColor    = color.New(color.FgBlue)
 )
 
+// rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "bm",
 	Short: "Bucket Manager CLI",
@@ -41,16 +51,28 @@ var rootCmd = &cobra.Command{
 Discovers stacks in standard local directories (~/bucket, ~/compose-bucket)
 and on remote hosts configured via SSH (~/.config/bucket-manager/config.yaml).
 Use 'bm serve' to start the web interface.`,
+
+	// PersistentPreRunE is executed before any subcommand runs
+	// It sets up the required environment and connections
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Ensure config directory exists
 		if err := config.EnsureConfigDir(); err != nil {
 			return fmt.Errorf("failed to ensure config directory: %w", err)
 		}
+
+		// Initialize SSH connection manager
 		sshManager = ssh.NewManager()
+
+		// Share SSH manager with other packages that need it
 		discovery.InitSSHManager(sshManager)
 		runner.InitSSHManager(sshManager)
 		return nil
 	},
+
+	// PersistentPostRunE is executed after any subcommand completes
+	// It handles cleanup of resources
 	PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
+		// Clean up SSH connections when command completes
 		if sshManager != nil {
 			sshManager.CloseAll()
 		}
@@ -65,14 +87,20 @@ func RunCLI() {
 	}
 }
 
+// init registers all CLI subcommands with the root command
 func init() {
+	// Stack discovery command
 	rootCmd.AddCommand(listCmd)
-	rootCmd.AddCommand(upCmd)
-	rootCmd.AddCommand(downCmd)
-	rootCmd.AddCommand(refreshCmd)
-	rootCmd.AddCommand(statusCmd)
-	rootCmd.AddCommand(pullCmd)
-	rootCmd.AddCommand(pruneCmd)
+
+	// Stack operation commands
+	rootCmd.AddCommand(upCmd)      // Start stacks
+	rootCmd.AddCommand(downCmd)    // Stop stacks
+	rootCmd.AddCommand(refreshCmd) // Restart stacks
+	rootCmd.AddCommand(statusCmd)  // Get stack status
+	rootCmd.AddCommand(pullCmd)    // Pull latest container images
+
+	// Host operation commands
+	rootCmd.AddCommand(pruneCmd) // Clean up unused containers/images
 }
 
 var listCmd = &cobra.Command{
