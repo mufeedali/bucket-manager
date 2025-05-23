@@ -1,5 +1,4 @@
 # Go build artifacts
-/bm
 dist/
 *.exe
 *.exe~
@@ -47,4 +46,4 @@ Thumbs.db
 .env.production.local
 
 # Binary files that might be generated during development
-/bucket-manager
+build/

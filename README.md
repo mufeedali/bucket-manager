@@ -1,6 +1,15 @@
-# Bucket Manager (bm)
+# 🪣 Bucket Manager (bm)
 
-Bucket Manager is a tool for managing multiple Podman Compose stacks across local and remote machines. It provides three interfaces: a command-line (CLI), a text-based UI (TUI), and a web interface.
+**Bucket Manager** is a tool for managing Podman Compose stacks across local and remote machines. It offers three interfaces to fit your workflow: CLI for automation, TUI for interactive management, and a web interface for visual control.
+
+## Features
+
+- **Simple & Intuitive** - Works just like you'd expect it to
+- **Local & Remote** - Manage stacks anywhere via SSH
+- **Multiple Interfaces** - CLI, TUI, and Web UI
+- **Real-time Updates** - Live status monitoring
+- **Zero Configuration** - Auto-discovers your compose stacks
+- **Tab Completion** - Fast command completion for the CLI
 
 ## Quick Start
 
@@ -8,12 +17,12 @@ Bucket Manager is a tool for managing multiple Podman Compose stacks across loca
    ```bash
    just install
    ```
-   This installs the `bm` binary to `~/.local/bin/` (ensure this is in your `$PATH`).
+   This installs the `bm` binary to `~/.local/bin/` (make sure this is in your `$PATH`). Actual path reference [here](https://docs.rs/dirs/latest/dirs/fn.executable_dir.html).
 
-2. **Choose an interface:**
+2. **Choose your interface:**
    - **CLI:** `bm list`, `bm up my-stack`
-   - **TUI:** `bm` (with no arguments)
-   - **Web UI:** `bm serve` and open http://localhost:8080
+   - **TUI:** `bm` (with no arguments for interactive mode)
+   - **Web UI:** `bm serve` then visit http://localhost:8080
 
 ## Core Features
 
@@ -45,7 +54,21 @@ Stacks can be referenced in three ways:
 
 Tab completion helps find the right names.
 
-## Additional Features
+## Stack Discovery
+
+Bucket Manager automatically discovers Podman Compose stacks in the following locations:
+
+**Default Paths:**
+- **Local:** `~/bucket` or `~/compose-bucket`
+- **Remote:** Same paths on configured SSH hosts
+
+**Custom Paths:**
+- **Local:** Use `bm config set-local-root <path>` to change the search directory
+- **Remote:** Configure per-host paths when adding hosts with `bm config ssh add` or `bm config ssh edit`
+
+All locations are searched for `compose.yaml` and `compose.yml` files.
+
+## Interfaces
 
 ### Web Interface
 
@@ -55,18 +78,7 @@ Run `bm serve` to start the web interface on http://localhost:8080, offering:
 - Remote host configuration
 - Command output streaming
 
-### Shell Completion
-
-Install tab completion for your shell:
-```bash
-# For Fish shell
-mkdir -p ~/.config/fish/completions
-bm completion fish > ~/.config/fish/completions/bm.fish
-```
-
-For other shells, replace `fish` with `bash`, `zsh`, or `powershell` and the appropriate path.
-
-### TUI Mode
+### TUI
 
 The text interface (`bm` with no arguments) provides:
 - Interactive navigation with keyboard shortcuts
@@ -75,7 +87,21 @@ The text interface (`bm` with no arguments) provides:
 - SSH configuration management (`c` key)
 - Host pruning
 
-### SSH Configuration
+### CLI
+
+#### Shell Completion
+
+Install tab completion for your shell:
+
+```bash
+# For Fish shell
+mkdir -p ~/.config/fish/completions
+bm completion fish > ~/.config/fish/completions/bm.fish
+```
+
+For other shells, replace `fish` with `bash`, `zsh`, or `powershell` and the appropriate path.
+
+#### SSH Configuration
 
 Manage remote hosts:
 - `bm config ssh list` - Show all hosts
@@ -83,13 +109,7 @@ Manage remote hosts:
 - `bm config ssh edit` - Edit an existing host
 - `bm config ssh import` - Import from ~/.ssh/config
 
-### Stack Discovery
-
-- **Local:** Finds `compose.yaml`/`compose.yml` files in `~/bucket` or `~/compose-bucket`
-- **Remote:** Searches the same paths on configured SSH hosts
-- **Custom paths:** Set with `bm config set-local-root <path>`
-
-## Examples
+#### Examples
 
 ```bash
 # Start a local stack

@@ -78,7 +78,7 @@ function StackList() {
       }
 
       const sshHosts: { Name: string }[] = await sshHostsResponse.json();
-      
+
       // Start all fetches in parallel
       const remotePromises = sshHosts.map(host => {
         return fetch(`/api/ssh/hosts/${host.Name}/stacks`)
@@ -143,12 +143,12 @@ function StackList() {
 
   const updateStackStatus = async (stack: StackWithStatus) => {
     try {
-      const response = await fetch(stack.ServerName === 'local' 
+      const response = await fetch(stack.ServerName === 'local'
         ? `/api/stacks/local/${stack.Name}/status`
         : `/api/ssh/hosts/${stack.ServerName}/stacks/${stack.Name}/status`);
       if (response.ok) {
         const updatedStatus = await response.json();
-        setStacks(prevStacks => prevStacks.map(s => 
+        setStacks(prevStacks => prevStacks.map(s =>
           s.Name === stack.Name && s.ServerName === stack.ServerName
             ? { ...s, status: updatedStatus.status }
             : s
@@ -195,7 +195,7 @@ function StackList() {
     const handleStreamOutput = (event: MessageEvent) => {
       // Split on newlines and filter out empty lines
       const lines = event.data.split('\\n').filter(Boolean) as string[];
-      
+
       setStreamedOutput(prevOutput => {
         // Filter out lines that are the same as the last line
         const newLines = lines.filter((line: string) => line !== lastLine);
@@ -227,7 +227,7 @@ function StackList() {
       eventSource.close();
       eventSourceRef.current = null;
       setRunningCommand(null);
-      
+
       // Update the stack's status after any action completes
       await updateStackStatus(stack);
     });
@@ -238,7 +238,7 @@ function StackList() {
     setPendingAction(action);
     setIsAlertDialogOpen(true);
   };
-  
+
   const handleActionConfirmed = () => {
     if (pendingStack && pendingAction) {
       executeStackAction(pendingStack, pendingAction);
@@ -263,14 +263,14 @@ function StackList() {
   // Group stacks by server
   const groupedStacks = React.useMemo(() => {
     const groups: Record<string, StackWithStatus[]> = {};
-    
+
     stacks.forEach(stack => {
       if (!groups[stack.ServerName]) {
         groups[stack.ServerName] = [];
       }
       groups[stack.ServerName].push(stack);
     });
-    
+
     // Sort servers to ensure consistent order with local first
     return Object.entries(groups).sort(([a], [b]) => {
       if (a === 'local') return -1;
@@ -317,12 +317,12 @@ function StackList() {
             <Server className="h-5 w-5 text-primary" />
             <h4 className="text-md font-medium">{serverName}</h4>
           </div>
-          
+
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
             {serverStacks.map((stack) => {
               const commandIdentifier = `${stack.ServerName}:${stack.Name}:refresh`;
               return (
-                <Card 
+                <Card
                   key={`${stack.ServerName}:${stack.Name}`}
                   className="relative group hover:shadow-lg transition-shadow flex flex-col pb-0 h-auto"
                 >
@@ -332,17 +332,17 @@ function StackList() {
                         <Package className="h-5 w-5 text-primary flex-shrink-0" />
                         <span className="truncate font-medium text-sm" title={stack.Name}>{stack.Name}</span>
                       </div>
-                      <Badge 
+                      <Badge
                         variant={
                           stack.status === "UP" ? "default" :
-                          stack.status === "DOWN" ? "secondary" :
-                          stack.status === "ERROR" || stack.status === "Load Error" ? "destructive" :
-                          stack.status === "loading..." ? "outline" :
-                          "secondary"
+                            stack.status === "DOWN" ? "secondary" :
+                              stack.status === "ERROR" || stack.status === "Load Error" ? "destructive" :
+                                stack.status === "loading..." ? "outline" :
+                                  "secondary"
                         }
                         className={
                           stack.status === "PARTIAL" ? "bg-yellow-500 hover:bg-yellow-500/90" :
-                          undefined
+                            undefined
                         }
                       >
                         {stack.status}
@@ -355,7 +355,7 @@ function StackList() {
                       <Button
                         variant="outline"
                         size="icon"
-                        className="h-8 w-8 rounded-lg bg-background hover:bg-background/80"
+                        className="h-8 w-8 rounded-lg"
                         onClick={() => confirmStackAction(stack, 'up')}
                         disabled={runningCommand !== null}
                         title="Start stack"
@@ -365,7 +365,7 @@ function StackList() {
                       <Button
                         variant="outline"
                         size="icon"
-                        className="h-8 w-8 rounded-lg bg-background hover:bg-background/80"
+                        className="h-8 w-8 rounded-lg"
                         onClick={() => confirmStackAction(stack, 'down')}
                         disabled={runningCommand !== null}
                         title="Stop stack"
@@ -375,7 +375,7 @@ function StackList() {
                       <Button
                         variant="outline"
                         size="icon"
-                        className="h-8 w-8 rounded-lg bg-background hover:bg-background/80"
+                        className="h-8 w-8 rounded-lg"
                         onClick={() => confirmStackAction(stack, 'pull')}
                         disabled={runningCommand !== null}
                         title="Pull latest updates"
@@ -385,7 +385,7 @@ function StackList() {
                       <Button
                         variant="outline"
                         size="icon"
-                        className="h-8 w-8 rounded-lg bg-background hover:bg-background/80"
+                        className="h-8 w-8 rounded-lg"
                         onClick={() => confirmStackAction(stack, 'refresh')}
                         disabled={runningCommand === commandIdentifier || (runningCommand !== null && runningCommand !== commandIdentifier)}
                         title="Refresh stack"
@@ -395,7 +395,7 @@ function StackList() {
                       <Button
                         variant="outline"
                         size="icon"
-                        className="h-8 w-8 rounded-lg bg-background hover:bg-background/80"
+                        className="h-8 w-8 rounded-lg"
                         title="View details (coming soon)"
                       >
                         <ExternalLink className="h-3 w-3" />
@@ -420,7 +420,7 @@ function StackList() {
         <DialogContent className="sm:max-w-[800px] bg-background">
           <DialogHeader>
             <DialogTitle>
-              {currentStack ? 
+              {currentStack ?
                 (() => {
                   const action = runningCommand?.split(':').pop() || '';
                   const formattedAction = action.charAt(0).toUpperCase() + action.slice(1);
@@ -459,7 +459,7 @@ function StackList() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
+            <AlertDialogAction
               onClick={handleActionConfirmed}
               className={pendingAction === 'down' ? 'bg-destructive hover:bg-destructive/90 text-destructive-foreground' : ''}
             >

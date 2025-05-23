@@ -21,7 +21,7 @@ export function Spinner({
   };
 
   const spinnerElement = (
-    <Loader2 
+    <Loader2
       className={cn(
         "animate-spin text-primary",
         sizeClasses[size],
