@@ -3,7 +3,7 @@
 
 // Package cli's config_ssh.go file implements CLI commands for managing SSH host
 // configurations. It provides interactive commands for adding, listing, editing,
-// removing, and importing SSH hosts used for connecting to remote Podman instances.
+// removing, and importing SSH hosts.
 
 package cli
 
@@ -16,21 +16,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
-
-// dimColor is used for less important/secondary text in the CLI output
-var dimColor = color.New(color.Faint)
-
-// configCmd is the parent command for all configuration-related subcommands
-var configCmd = &cobra.Command{
-	Use:   "config",
-	Short: "Manage bucket-manager configuration",
-	Long: `Provides subcommands to manage different aspects of the bucket-manager configuration.
-This includes SSH host configurations and local root path settings.`,
-	// PersistentPreRun ensures config dir exists, already handled by rootCmd
-}
 
 // sshCmd is the parent command for SSH-specific configuration subcommands
 var sshCmd = &cobra.Command{
@@ -520,8 +507,6 @@ func init() {
 	sshCmd.AddCommand(sshImportCmd)
 
 	configCmd.AddCommand(sshCmd)
-
-	rootCmd.AddCommand(configCmd)
 }
 
 var reader = bufio.NewReader(os.Stdin)

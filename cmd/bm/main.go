@@ -2,7 +2,7 @@
 // Copyright (c) 2025 Mufeed Ali
 
 // Package main is the entry point for the bucket manager (bm) application,
-// which provides CLI, TUI, and Web UI interfaces for managing Podman Compose stacks.
+// which provides CLI, TUI, and Web UI interfaces for managing compose stacks.
 package main
 
 import (
@@ -17,13 +17,14 @@ import (
 // in CLI or TUI mode based on command-line arguments.
 // If arguments are provided, CLI mode is selected; otherwise TUI mode starts.
 func main() {
-	// Initialize the logger with file-only logging disabled
-	logger.InitLogger(false)
-
 	// Determine mode based on command line arguments
 	if len(os.Args) > 1 {
+		// Initialize logger for CLI mode (clean by default)
+		logger.InitCLI(false, false)
 		cli.RunCLI()
 	} else {
+		// Initialize logger for TUI mode (file only)
+		logger.InitTUI()
 		tui.RunTUI()
 	}
 }

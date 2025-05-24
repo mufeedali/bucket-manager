@@ -3,7 +3,7 @@
 
 // Package cli implements the command-line interface for the bucket manager.
 // It provides subcommands for managing stacks, SSH configurations, and
-// executing operations on both local and remote Podman Compose stacks.
+// executing operations on both local and remote compose stacks.
 package cli
 
 import (
@@ -46,7 +46,7 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "bm",
 	Short: "Bucket Manager CLI",
-	Long: `A command-line interface to manage multiple Podman Compose stacks.
+	Long: `A command-line interface to manage multiple compose stacks.
 
 Discovers stacks in standard local directories (~/bucket, ~/compose-bucket)
 and on remote hosts configured via SSH (~/.config/bucket-manager/config.yaml).
@@ -55,6 +55,13 @@ Use 'bm serve' to start the web interface.`,
 	// PersistentPreRunE is executed before any subcommand runs
 	// It sets up the required environment and connections
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Handle verbose flag for logging
+		verbose, _ := cmd.Flags().GetBool("verbose")
+		silent, _ := cmd.Flags().GetBool("silent")
+
+		// Re-initialize logger with correct verbosity settings
+		logger.InitCLI(verbose, silent)
+
 		// Ensure config directory exists
 		if err := config.EnsureConfigDir(); err != nil {
 			return fmt.Errorf("failed to ensure config directory: %w", err)
@@ -89,6 +96,10 @@ func RunCLI() {
 
 // init registers all CLI subcommands with the root command
 func init() {
+	// Add persistent flags that apply to all commands
+	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose logging to stderr")
+	rootCmd.PersistentFlags().BoolP("silent", "s", false, "Suppress all output to stderr (file logging only)")
+
 	// Stack discovery command
 	rootCmd.AddCommand(listCmd)
 
@@ -105,7 +116,7 @@ func init() {
 
 var listCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List discovered Podman Compose stacks (local and remote)",
+	Short: "List discovered compose stacks (local and remote)",
 	Run: func(cmd *cobra.Command, args []string) {
 		statusColor.Println("Discovering stacks...")
 		stackChan, errorChan, _ := discovery.FindStacks()
@@ -141,7 +152,7 @@ var listCmd = &cobra.Command{
 		wg.Wait()
 
 		if !stacksFound && len(collectedErrors) == 0 {
-			fmt.Println("\nNo Podman Compose stacks found locally or on configured remote hosts.")
+			fmt.Println("\nNo compose stacks found locally or on configured remote hosts.")
 		} else if !stacksFound && len(collectedErrors) > 0 {
 			fmt.Println("\nNo stacks discovered successfully.")
 		}
@@ -154,7 +165,7 @@ var listCmd = &cobra.Command{
 
 var upCmd = &cobra.Command{
 	Use:               "up <stack-identifier>",
-	Short:             "Run 'pull' and 'up -d' for a stack",
+	Short:             "Start a stack",
 	Example:           "  bm up my-local-app\n  bm up server1:remote-app",
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: stackCompletionFunc,
@@ -165,7 +176,7 @@ var upCmd = &cobra.Command{
 
 var downCmd = &cobra.Command{
 	Use:               "down <stack-identifier>",
-	Short:             "Run 'podman compose down' for a stack",
+	Short:             "Stop a stack",
 	Example:           "  bm down my-local-app\n  bm down server1:remote-app",
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: stackCompletionFunc,
@@ -175,11 +186,10 @@ var downCmd = &cobra.Command{
 }
 
 var refreshCmd = &cobra.Command{
-	Use:               "refresh <stack-identifier>",
-	Aliases:           []string{"re"},
-	Short:             "Run 'pull', 'down', 'up', and maybe 'prune' for a stack (alias: re)",
-	Long:              `Runs 'pull', 'down', 'up -d' for the specified stack. Additionally runs 'podman system prune -af' locally if the target stack is local.`,
-	Example:           "  bm refresh my-local-app\n  bm re server1:remote-app",
+	Use:     "refresh <stack-identifier>",
+	Aliases: []string{"re"},
+	Short:   "Fully refresh a stack (alias: re)",
+	Long:    `Pulls latest images, stops the stack, and starts it again. Also cleans up unused resources on local stacks.`, Example: "  bm refresh my-local-app\n  bm re server1:remote-app",
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: stackCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -189,7 +199,7 @@ var refreshCmd = &cobra.Command{
 
 var pullCmd = &cobra.Command{
 	Use:               "pull <stack-identifier>",
-	Short:             "Run 'podman compose pull' for a stack",
+	Short:             "Pull latest images for a stack",
 	Example:           "  bm pull my-local-app\n  bm pull server1:remote-app",
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: stackCompletionFunc,
@@ -201,7 +211,7 @@ var pullCmd = &cobra.Command{
 var statusCmd = &cobra.Command{
 	Use:   "status [stack-identifier]",
 	Short: "Show the status of containers for one or all stacks",
-	Long: `Shows the status of Podman Compose containers for local and remote stacks.
+	Long: `Shows the status of compose containers for local and remote stacks.
 If a stack identifier (e.g., my-app or server1:remote-app) is provided, shows status for that specific stack.
 If a remote identifier ending with ':' (e.g., server1:) is provided, shows status for all stacks on that remote.
 Otherwise, shows status for all discovered stacks.`,
@@ -242,7 +252,7 @@ Otherwise, shows status for all discovered stacks.`,
 
 		if len(stacksToProcess) == 0 {
 			if scanAll {
-				fmt.Println("\nNo Podman Compose stacks found locally or on configured remote hosts.")
+				fmt.Println("\nNo compose stacks found locally or on configured remote hosts.")
 			}
 			if len(collectedErrors) == 0 {
 				os.Exit(1)
@@ -323,13 +333,13 @@ Otherwise, shows status for all discovered stacks.`,
 
 var pruneCmd = &cobra.Command{
 	Use:   "prune [host-identifier...]",
-	Short: "Run 'podman system prune -af' on specified hosts (local or remote)",
-	Long: `Runs 'podman system prune -af' to remove unused data (containers, networks, images, volumes).
+	Short: "Clean up unused resources on specified hosts",
+	Long: `Removes unused containers, networks, images, and volumes on the specified hosts.
 Targets can be 'local', specific remote host names, or left empty to target ALL configured hosts (local + remotes).`,
-	Example: `  bm prune          # Prune local system AND all configured remote hosts
-	 bm prune local       # Prune only the local system
-	 bm prune server1     # Prune only the remote host 'server1'
-	 bm prune local server1 server2 # Prune local, server1, and server2`,
+	Example: `  bm prune          # Clean up local system AND all configured remote hosts
+	 bm prune local       # Clean up only the local system
+	 bm prune server1     # Clean up only the remote host 'server1'
+	 bm prune local server1 server2 # Clean up local, server1, and server2`,
 	ValidArgsFunction: hostCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := config.LoadConfig()

@@ -2,13 +2,14 @@
 // Copyright (c) 2025 Mufeed Ali
 
 // Package runner provides functionality for executing commands on local and remote hosts.
-// It handles command execution, output streaming, and error handling for Podman Compose
+// It handles command execution, output streaming, and error handling for compose
 // operations across both local and SSH-connected remote environments.
 package runner
 
 import (
 	"bucket-manager/internal/config"
 	"bucket-manager/internal/discovery"
+	"bucket-manager/internal/logger"
 	"bucket-manager/internal/ssh"
 	"bucket-manager/internal/util"
 	"bufio"
@@ -21,6 +22,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // sshManager is a package-level reference to the SSH connection manager
@@ -36,7 +38,7 @@ func InitSSHManager(manager *ssh.Manager) {
 }
 
 // CommandStep represents a single command to be executed within a stack's directory
-// Used for operations like 'podman compose up', 'podman compose down', etc.
+// Used for stack operations like starting, stopping, pulling images, etc.
 type CommandStep struct {
 	Name    string          // User-friendly name/description of the command
 	Command string          // The executable command (e.g., 'podman')
@@ -79,11 +81,24 @@ func RunHostCommand(step HostCommandStep, cliMode bool) (<-chan OutputLine, <-ch
 		defer close(outChan)
 		defer close(errChan)
 
+		startTime := time.Now()
 		cmdDesc := fmt.Sprintf("step '%s' for host %s", step.Name, step.Target.ServerName)
+
+		logger.Debug("Host command execution starting",
+			"step_name", step.Name,
+			"server_name", step.Target.ServerName,
+			"command", step.Command,
+			"args", step.Args,
+			"is_remote", step.Target.IsRemote,
+			"cli_mode", cliMode)
 
 		if step.Target.IsRemote {
 			if step.Target.HostConfig == nil {
-				errChan <- fmt.Errorf("internal error: HostConfig is nil for remote host %s", step.Target.ServerName)
+				err := fmt.Errorf("internal error: HostConfig is nil for remote host %s", step.Target.ServerName)
+				logger.Error("Missing host config for remote host command",
+					"server_name", step.Target.ServerName,
+					"error", err)
+				errChan <- err
 				return
 			}
 			// Construct the remote command string (command args...) - No cd needed for host commands
@@ -93,14 +108,29 @@ func RunHostCommand(step HostCommandStep, cliMode bool) (<-chan OutputLine, <-ch
 			}
 			remoteCmdString := strings.Join(remoteCmdParts, " ")
 
+			logger.Debug("Executing remote host command",
+				"host_name", step.Target.HostConfig.Name,
+				"remote_command", remoteCmdString)
+
 			runSSHCommand(*step.Target.HostConfig, remoteCmdString, cmdDesc, cliMode, outChan, errChan)
 		} else {
 			cmd := exec.Command(step.Command, step.Args...)
 			// cmd.Dir is not set for host commands, run in the default working directory
 			localCmdDesc := fmt.Sprintf("local %s", cmdDesc)
 
+			logger.Debug("Executing local host command",
+				"command", step.Command,
+				"args", step.Args)
+
 			runLocalCommand(cmd, localCmdDesc, cliMode, outChan, errChan)
 		}
+
+		duration := time.Since(startTime)
+		logger.Debug("Host command execution completed",
+			"step_name", step.Name,
+			"server_name", step.Target.ServerName,
+			"duration_ms", duration.Milliseconds(),
+			"is_remote", step.Target.IsRemote)
 	}()
 
 	return outChan, errChan
@@ -138,15 +168,32 @@ func StreamCommand(step CommandStep, cliMode bool) (<-chan OutputLine, <-chan er
 		defer close(outChan)
 		defer close(errChan)
 
+		startTime := time.Now()
 		cmdDesc := fmt.Sprintf("step '%s' for stack %s", step.Name, step.Stack.Identifier())
+
+		logger.Debug("Command execution starting",
+			"step_name", step.Name,
+			"stack_identifier", step.Stack.Identifier(),
+			"command", step.Command,
+			"args", step.Args,
+			"is_remote", step.Stack.IsRemote,
+			"cli_mode", cliMode)
 
 		if step.Stack.IsRemote {
 			if step.Stack.HostConfig == nil {
-				errChan <- fmt.Errorf("internal error: HostConfig is nil for remote stack %s", step.Stack.Identifier())
+				err := fmt.Errorf("internal error: HostConfig is nil for remote stack %s", step.Stack.Identifier())
+				logger.Error("Missing host config for remote stack",
+					"stack_identifier", step.Stack.Identifier(),
+					"error", err)
+				errChan <- err
 				return
 			}
 			if step.Stack.AbsoluteRemoteRoot == "" {
-				errChan <- fmt.Errorf("internal error: AbsoluteRemoteRoot is empty for remote stack %s", step.Stack.Identifier())
+				err := fmt.Errorf("internal error: AbsoluteRemoteRoot is empty for remote stack %s", step.Stack.Identifier())
+				logger.Error("Missing absolute remote root for remote stack",
+					"stack_identifier", step.Stack.Identifier(),
+					"error", err)
+				errChan <- err
 				return
 			}
 			remoteStackPath := filepath.Join(step.Stack.AbsoluteRemoteRoot, step.Stack.Path)
@@ -156,40 +203,59 @@ func StreamCommand(step CommandStep, cliMode bool) (<-chan OutputLine, <-chan er
 			}
 			remoteCmdString := strings.Join(remoteCmdParts, " ")
 
+			logger.Debug("Executing remote command",
+				"host_name", step.Stack.HostConfig.Name,
+				"remote_command", remoteCmdString,
+				"stack_path", remoteStackPath)
+
 			runSSHCommand(*step.Stack.HostConfig, remoteCmdString, cmdDesc, cliMode, outChan, errChan)
 		} else {
 			cmd := exec.Command(step.Command, step.Args...)
 			cmd.Dir = step.Stack.Path
 			localCmdDesc := fmt.Sprintf("local %s", cmdDesc)
 
+			logger.Debug("Executing local command",
+				"command", step.Command,
+				"args", step.Args,
+				"working_dir", step.Stack.Path)
+
 			runLocalCommand(cmd, localCmdDesc, cliMode, outChan, errChan)
 		}
+
+		duration := time.Since(startTime)
+		logger.Debug("Command execution completed",
+			"step_name", step.Name,
+			"stack_identifier", step.Stack.Identifier(),
+			"duration_ms", duration.Milliseconds(),
+			"is_remote", step.Stack.IsRemote)
 	}()
 
 	return outChan, errChan
 }
 
 func UpSequence(stack discovery.Stack) []CommandStep {
+	runtime := config.GetContainerRuntime()
 	return []CommandStep{
 		{
 			Name:    "Pull Images",
-			Command: "podman",
+			Command: runtime,
 			Args:    []string{"compose", "pull"},
 			Stack:   stack,
 		},
 		{
 			Name:    "Start Containers",
-			Command: "podman",
+			Command: runtime,
 			Args:    []string{"compose", "up", "-d"},
 			Stack:   stack,
 		},
 	}
 }
 func PullSequence(stack discovery.Stack) []CommandStep {
+	runtime := config.GetContainerRuntime()
 	return []CommandStep{
 		{
 			Name:    "Pull Images",
-			Command: "podman",
+			Command: runtime,
 			Args:    []string{"compose", "pull"},
 			Stack:   stack,
 		},
@@ -197,10 +263,11 @@ func PullSequence(stack discovery.Stack) []CommandStep {
 }
 
 func DownSequence(stack discovery.Stack) []CommandStep {
+	runtime := config.GetContainerRuntime()
 	return []CommandStep{
 		{
 			Name:    "Stop Containers",
-			Command: "podman",
+			Command: runtime,
 			Args:    []string{"compose", "down"},
 			Stack:   stack,
 		},
@@ -208,22 +275,23 @@ func DownSequence(stack discovery.Stack) []CommandStep {
 }
 
 func RefreshSequence(stack discovery.Stack) []CommandStep {
+	runtime := config.GetContainerRuntime()
 	steps := []CommandStep{
 		{
 			Name:    "Pull Images",
-			Command: "podman",
+			Command: runtime,
 			Args:    []string{"compose", "pull"},
 			Stack:   stack,
 		},
 		{
 			Name:    "Stop Containers",
-			Command: "podman",
+			Command: runtime,
 			Args:    []string{"compose", "down"},
 			Stack:   stack,
 		},
 		{
 			Name:    "Start Containers",
-			Command: "podman",
+			Command: runtime,
 			Args:    []string{"compose", "up", "-d"},
 			Stack:   stack,
 		},
@@ -232,7 +300,7 @@ func RefreshSequence(stack discovery.Stack) []CommandStep {
 	if !stack.IsRemote {
 		steps = append(steps, CommandStep{
 			Name:    "Prune Local System",
-			Command: "podman",
+			Command: runtime,
 			Args:    []string{"system", "prune", "-af"},
 			Stack:   stack,
 		})
@@ -240,11 +308,12 @@ func RefreshSequence(stack discovery.Stack) []CommandStep {
 	return steps
 }
 
-// PruneHostStep creates a command step to prune the Podman system on a target host.
+// PruneHostStep creates a command step to prune the container system on a target host.
 func PruneHostStep(target HostTarget) HostCommandStep {
+	runtime := config.GetContainerRuntime()
 	return HostCommandStep{
 		Name:    "Prune System",
-		Command: "podman",
+		Command: runtime,
 		Args:    []string{"system", "prune", "-af"},
 		Target:  target,
 	}
@@ -276,7 +345,7 @@ type StackRuntimeInfo struct {
 	Error         error
 }
 
-// parseContainerStatusOutput processes the JSON stream output from 'podman compose ps'.
+// parseContainerStatusOutput processes the JSON stream output from 'compose ps'.
 func parseContainerStatusOutput(output []byte) ([]ContainerState, error) {
 	var containers []ContainerState
 	var firstUnmarshalError error
@@ -359,6 +428,7 @@ func aggregateOverallStatus(containers []ContainerState) StackStatus {
 }
 
 func GetStackStatus(stack discovery.Stack) StackRuntimeInfo {
+	runtime := config.GetContainerRuntime()
 	info := StackRuntimeInfo{Stack: stack, OverallStatus: StatusUnknown}
 	cmdDesc := fmt.Sprintf("status check for stack %s", stack.Identifier())
 	psArgs := []string{"compose", "ps", "--format", "json", "-a"}
@@ -369,10 +439,10 @@ func GetStackStatus(stack discovery.Stack) StackRuntimeInfo {
 
 	// 1. Execute command (local or remote)
 	if stack.IsRemote {
-		output, cmdErr = runSSHStatusCheck(stack, psArgs, cmdDesc)
+		output, cmdErr = runSSHStatusCheck(stack, runtime, psArgs, cmdDesc)
 		// runSSHStatusCheck returns combined output and the command error
 	} else {
-		cmd := exec.Command("podman", psArgs...)
+		cmd := exec.Command(runtime, psArgs...)
 		cmd.Dir = stack.Path
 		var stdoutBuf, stderrBuf bytes.Buffer
 		cmd.Stdout = &stdoutBuf

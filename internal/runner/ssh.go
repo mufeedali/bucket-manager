@@ -68,7 +68,7 @@ func runSSHCommand(
 		return
 	}
 
-	// Request a PTY for interactive commands like podman compose (enables color)
+	// Request a PTY for interactive commands like compose (enables color)
 	// Only do this if in CLI mode.
 	if cliMode {
 		// Use sensible defaults for terminal type and size.
@@ -134,8 +134,8 @@ func runSSHCommand(
 	}
 }
 
-// runSSHStatusCheck executes 'podman compose ps' remotely via SSH and returns the combined output.
-func runSSHStatusCheck(stack discovery.Stack, psArgs []string, cmdDesc string) ([]byte, error) {
+// runSSHStatusCheck executes compose ps remotely via SSH and returns the combined output.
+func runSSHStatusCheck(stack discovery.Stack, runtime string, psArgs []string, cmdDesc string) ([]byte, error) {
 	if sshManager == nil {
 		return nil, fmt.Errorf("ssh manager not initialized for %s", cmdDesc)
 	}
@@ -158,7 +158,7 @@ func runSSHStatusCheck(stack discovery.Stack, psArgs []string, cmdDesc string) (
 		return nil, fmt.Errorf("internal error: AbsoluteRemoteRoot is empty for remote stack %s", stack.Identifier())
 	}
 	remoteStackPath := filepath.Join(stack.AbsoluteRemoteRoot, stack.Path)
-	remoteCmdParts := []string{"cd", util.QuoteArgForShell(remoteStackPath), "&&", "podman"}
+	remoteCmdParts := []string{"cd", util.QuoteArgForShell(remoteStackPath), "&&", runtime}
 	for _, arg := range psArgs {
 		remoteCmdParts = append(remoteCmdParts, util.QuoteArgForShell(arg))
 	}

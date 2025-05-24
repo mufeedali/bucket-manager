@@ -3,7 +3,7 @@
 
 // Package ui implements the Text User Interface components using the Bubble Tea framework.
 // It defines the TUI model, views, update logic, and event handling for navigating
-// and managing Podman Compose stacks interactively in the terminal.
+// and managing compose stacks interactively in the terminal.
 package ui
 
 import (
@@ -33,7 +33,7 @@ var BubbleProgram *tea.Program
 // model represents the TUI application state
 type model struct {
 	keymap               KeyMap            // Keyboard shortcuts configuration
-	stacks               []discovery.Stack // List of discovered Podman Compose stacks
+	stacks               []discovery.Stack // List of discovered compose stacks
 	cursor               int               // Current cursor position in the stack list
 	selectedStackIdxs    map[int]struct{}
 	configCursor         int

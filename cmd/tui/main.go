@@ -3,13 +3,12 @@
 
 // Package tui implements the Text User Interface mode for the bucket manager,
 // providing an interactive terminal application for browsing and managing
-// Podman Compose stacks using the Bubble Tea framework.
+// compose stacks using the Bubble Tea framework.
 package tui
 
 import (
 	"bucket-manager/internal/config"
 	"bucket-manager/internal/discovery"
-	"bucket-manager/internal/logger"
 	"bucket-manager/internal/runner"
 	"bucket-manager/internal/ssh"
 	"bucket-manager/internal/ui"
@@ -22,9 +21,6 @@ import (
 // RunTUI initializes and starts the Text User Interface application.
 // This is the main entry point for the TUI mode of the bucket manager.
 func RunTUI() {
-	// Initialize logger for TUI mode (logs to file only to avoid cluttering the UI)
-	logger.InitLogger(true)
-
 	// Ensure configuration directory exists
 	if err := config.EnsureConfigDir(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error ensuring config directory: %v\n", err)

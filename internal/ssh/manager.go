@@ -40,6 +40,11 @@ func NewManager() *Manager {
 // It reuses existing connections when possible, and creates new ones when necessary.
 // The method includes connection validation and reconnection logic for robustness.
 func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
+	logger.Debug("Getting SSH client",
+		"host_name", hostConfig.Name,
+		"hostname", hostConfig.Hostname,
+		"user", hostConfig.User)
+
 	m.mu.Lock()
 	client, found := m.clients[hostConfig.Name]
 	if found {
@@ -47,23 +52,39 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 		// This helps detect stale connections without a full reconnect attempt
 		_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
 		if err == nil {
+			logger.Debug("Reusing existing SSH connection", "host_name", hostConfig.Name)
 			m.mu.Unlock()
 			return client, nil
 		}
+		logger.Debug("Existing SSH connection failed keepalive, reconnecting",
+			"host_name", hostConfig.Name, "error", err)
 		if err := client.Close(); err != nil {
-			logger.Errorf("Error closing existing SSH client for %s during reconnect: %v", hostConfig.Name, err)
+			logger.Warn("Error closing existing SSH client during reconnect",
+				"host_name", hostConfig.Name, "error", err)
 		}
 		delete(m.clients, hostConfig.Name)
 	}
 	m.mu.Unlock() // Unlock before potentially long Dial operation
 
+	logger.Debug("Establishing new SSH connection", "host_name", hostConfig.Name)
+
 	authMethods, err := m.getAuthMethods(hostConfig)
 	if err != nil {
+		logger.Error("Failed to prepare SSH auth methods",
+			"host_name", hostConfig.Name, "error", err)
 		return nil, fmt.Errorf("failed to prepare auth methods for %s: %w", hostConfig.Name, err)
 	}
 	if len(authMethods) == 0 {
+		logger.Error("No suitable SSH authentication method found",
+			"host_name", hostConfig.Name,
+			"has_key_path", hostConfig.KeyPath != "",
+			"has_password", hostConfig.Password != "")
 		return nil, fmt.Errorf("no suitable authentication method found for %s (key, agent, or password required)", hostConfig.Name)
 	}
+
+	logger.Debug("SSH auth methods prepared",
+		"host_name", hostConfig.Name,
+		"method_count", len(authMethods))
 
 	sshConfig := &ssh.ClientConfig{
 		User:    hostConfig.User,
@@ -76,7 +97,8 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 		// Log the error but potentially continue if it's just a missing file.
 		// Allowing connection without verification is risky, but might be acceptable for some tools.
 		// We'll log and proceed without strict verification if the file is missing/unparsable.
-		logger.Warnf("Could not create known_hosts callback for %s: %v. Host key will not be verified.", hostConfig.Name, khErr)
+		logger.Warn("Could not create known_hosts callback, host key will not be verified",
+			"host_name", hostConfig.Name, "error", khErr)
 		sshConfig.HostKeyCallback = ssh.InsecureIgnoreHostKey()
 	} else {
 		sshConfig.HostKeyCallback = hostKeyCallback
@@ -88,10 +110,23 @@ func (m *Manager) GetClient(hostConfig config.SSHHost) (*ssh.Client, error) {
 	}
 	addr := fmt.Sprintf("%s:%d", hostConfig.Hostname, port)
 
+	logger.Debug("Attempting SSH connection",
+		"host_name", hostConfig.Name,
+		"address", addr,
+		"timeout", sshConfig.Timeout)
+
 	newClient, err := ssh.Dial("tcp", addr, sshConfig)
 	if err != nil {
+		logger.Error("SSH connection failed",
+			"host_name", hostConfig.Name,
+			"address", addr,
+			"error", err)
 		return nil, fmt.Errorf("failed to dial ssh host %s (%s): %w", hostConfig.Name, addr, err)
 	}
+
+	logger.Info("SSH connection established successfully",
+		"host_name", hostConfig.Name,
+		"address", addr)
 
 	m.mu.Lock()
 	// Double-check if another goroutine created a client while we were dialing

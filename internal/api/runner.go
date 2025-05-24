@@ -12,9 +12,11 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"bucket-manager/internal/config"
 	"bucket-manager/internal/discovery"
+	"bucket-manager/internal/logger"
 	"bucket-manager/internal/runner"
 
 	"github.com/gorilla/mux"
@@ -65,23 +67,50 @@ func RegisterRunnerRoutes(router *mux.Router) {
 
 // getStackFromRequest reads the request body and retrieves the corresponding discovery.Stack.
 func getStackFromRequest(r *http.Request) (discovery.Stack, error) {
+	startTime := time.Now()
+
+	logger.Debug("Processing stack request from request body",
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.Header.Get("User-Agent"))
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		logger.Error("Failed to read request body for stack request",
+			"error", err,
+			"remote_addr", r.RemoteAddr)
 		return discovery.Stack{}, fmt.Errorf("error reading request body: %w", err)
 	}
 	defer r.Body.Close()
 
 	var req StackRunRequest
 	if err := json.Unmarshal(body, &req); err != nil {
+		logger.Error("Failed to unmarshal stack request body",
+			"error", err,
+			"body_length", len(body),
+			"remote_addr", r.RemoteAddr)
 		return discovery.Stack{}, fmt.Errorf("invalid request body: %w", err)
 	}
+
+	logger.Debug("Parsed stack request",
+		"stack_name", req.Name,
+		"server_name", req.ServerName,
+		"duration", time.Since(startTime))
 
 	if req.ServerName == "local" {
 		rootDir, err := discovery.GetComposeRootDirectory()
 		if err != nil {
+			logger.Error("Failed to get local compose root directory for stack request",
+				"stack_name", req.Name,
+				"error", err)
 			return discovery.Stack{}, fmt.Errorf("error getting local root directory: %w", err)
 		}
 		stackPath := rootDir + "/" + req.Name
+
+		logger.Info("Created local stack from request",
+			"stack_name", req.Name,
+			"stack_path", stackPath,
+			"duration", time.Since(startTime))
+
 		return discovery.Stack{
 			Name:       req.Name,
 			Path:       stackPath,
@@ -90,29 +119,74 @@ func getStackFromRequest(r *http.Request) (discovery.Stack, error) {
 		}, nil
 	} else {
 		// Get complete remote stack with AbsoluteRemoteRoot properly populated
-		return findRemoteStackByNameAndServer(req.Name, req.ServerName)
+		logger.Debug("Looking up remote stack",
+			"stack_name", req.Name,
+			"server_name", req.ServerName)
+
+		stack, err := findRemoteStackByNameAndServer(req.Name, req.ServerName)
+		if err != nil {
+			logger.Error("Failed to find remote stack",
+				"stack_name", req.Name,
+				"server_name", req.ServerName,
+				"error", err)
+			return discovery.Stack{}, err
+		}
+
+		logger.Info("Found remote stack from request",
+			"stack_name", req.Name,
+			"server_name", req.ServerName,
+			"stack_path", stack.Path,
+			"duration", time.Since(startTime))
+
+		return stack, nil
 	}
 }
 
 // getHostTargetFromRequest reads the request body and retrieves the corresponding runner.HostTarget.
 func getHostTargetFromRequest(r *http.Request) (runner.HostTarget, error) {
+	startTime := time.Now()
+
+	logger.Debug("Processing host target request from request body",
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.Header.Get("User-Agent"))
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		logger.Error("Failed to read request body for host target request",
+			"error", err,
+			"remote_addr", r.RemoteAddr)
 		return runner.HostTarget{}, fmt.Errorf("error reading request body: %w", err)
 	}
 	defer r.Body.Close()
 
 	var req HostRunRequest
 	if err := json.Unmarshal(body, &req); err != nil {
+		logger.Error("Failed to unmarshal host target request body",
+			"error", err,
+			"body_length", len(body),
+			"remote_addr", r.RemoteAddr)
 		return runner.HostTarget{}, fmt.Errorf("invalid request body: %w", err)
 	}
 
+	logger.Debug("Parsed host target request",
+		"server_name", req.ServerName,
+		"duration", time.Since(startTime))
+
 	if req.ServerName == "local" {
+		logger.Info("Created local host target from request",
+			"server_name", req.ServerName,
+			"duration", time.Since(startTime))
 		return runner.HostTarget{ServerName: "local", IsRemote: false}, nil
 	} else {
 		// For remote hosts, find the host config
+		logger.Debug("Loading config for remote host target",
+			"server_name", req.ServerName)
+
 		cfg, err := config.LoadConfig()
 		if err != nil {
+			logger.Error("Failed to load config for remote host target",
+				"server_name", req.ServerName,
+				"error", err)
 			return runner.HostTarget{}, fmt.Errorf("error loading config: %w", err)
 		}
 
@@ -125,8 +199,16 @@ func getHostTargetFromRequest(r *http.Request) (runner.HostTarget, error) {
 		}
 
 		if targetHost == nil {
+			logger.Error("SSH host not found for host target request",
+				"server_name", req.ServerName,
+				"available_hosts", len(cfg.SSHHosts))
 			return runner.HostTarget{}, fmt.Errorf("SSH host '%s' not found", req.ServerName)
 		}
+
+		logger.Info("Created remote host target from request",
+			"server_name", req.ServerName,
+			"host_address", targetHost.Hostname,
+			"duration", time.Since(startTime))
 
 		return runner.HostTarget{ServerName: req.ServerName, IsRemote: true, HostConfig: targetHost}, nil
 	}
@@ -148,6 +230,18 @@ func getHostTargetFromRequest(r *http.Request) (runner.HostTarget, error) {
 //   - w: HTTP response writer to send the SSE stream
 //   - sequence: Ordered list of commands to execute
 func runStackSequence(w http.ResponseWriter, sequence []runner.CommandStep) {
+	startTime := time.Now()
+
+	logger.Info("Starting stack command sequence stream",
+		"sequence_length", len(sequence),
+		"steps", func() []string {
+			steps := make([]string, len(sequence))
+			for i, step := range sequence {
+				steps[i] = step.Name
+			}
+			return steps
+		}())
+
 	// Set headers for Server-Sent Events
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -156,17 +250,30 @@ func runStackSequence(w http.ResponseWriter, sequence []runner.CommandStep) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		logger.Error("HTTP response writer does not support flushing for SSE stream")
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 		return
 	}
 
+	logger.Debug("SSE headers set, starting command sequence execution")
+
 	// For simplicity, run steps sequentially and stream output
-	for _, step := range sequence {
+	for i, step := range sequence {
+		stepStartTime := time.Now()
+
+		logger.Debug("Starting sequence step",
+			"step_index", i+1,
+			"step_name", step.Name,
+			"total_steps", len(sequence))
+
 		// Send step name as an event
 		fmt.Fprintf(w, "event: step\ndata: %s\n\n", step.Name)
 		flusher.Flush()
 
 		outChan, errChan := runner.StreamCommand(step, false) // Use cliMode false for channel output
+
+		outputLines := 0
+		errorLines := 0
 
 		// Collect output and errors from channels and stream them
 		for outputLine := range outChan {
@@ -179,28 +286,54 @@ func runStackSequence(w http.ResponseWriter, sequence []runner.CommandStep) {
 			escapedLine := strings.ReplaceAll(line, "\n", "\\n")
 			if outputLine.IsError {
 				fmt.Fprintf(w, "event: stderr\ndata: %s\n\n", escapedLine)
+				errorLines++
 			} else {
 				fmt.Fprintf(w, "event: stdout\ndata: %s\n\n", escapedLine)
+				outputLines++
 			}
 			flusher.Flush()
 		}
 
 		// Check for errors after the command finishes
 		if err := <-errChan; err != nil {
+			logger.Error("Error during sequence step execution",
+				"step_index", i+1,
+				"step_name", step.Name,
+				"error", err,
+				"step_duration", time.Since(stepStartTime))
+
 			errMsg := strings.TrimRight(err.Error(), " \t\r\n")
 			escapedError := strings.ReplaceAll(errMsg, "\n", "\\n")
 			fmt.Fprintf(w, "event: error\ndata: Error during step '%s': %s\n\n", step.Name, escapedError)
 			flusher.Flush()
+		} else {
+			logger.Debug("Completed sequence step successfully",
+				"step_index", i+1,
+				"step_name", step.Name,
+				"output_lines", outputLines,
+				"error_lines", errorLines,
+				"step_duration", time.Since(stepStartTime))
 		}
 	}
 
 	// Send a done event when the sequence is finished
 	fmt.Fprintf(w, "event: done\ndata: Sequence finished\n\n")
 	flusher.Flush()
+
+	logger.Info("Completed stack command sequence stream",
+		"total_steps", len(sequence),
+		"total_duration", time.Since(startTime))
 }
 
 // runHostCommand streams the output of a given host command using Server-Sent Events.
 func runHostCommand(w http.ResponseWriter, step runner.HostCommandStep) {
+	startTime := time.Now()
+
+	logger.Info("Starting host command stream",
+		"command_name", step.Name,
+		"server_name", step.Target.ServerName,
+		"is_remote", step.Target.IsRemote)
+
 	// Set headers for Server-Sent Events
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -209,15 +342,22 @@ func runHostCommand(w http.ResponseWriter, step runner.HostCommandStep) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		logger.Error("HTTP response writer does not support flushing for host command SSE stream")
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+
+	logger.Debug("SSE headers set, starting host command execution",
+		"command_name", step.Name)
 
 	// Send step name as an event
 	fmt.Fprintf(w, "event: step\ndata: %s\n\n", step.Name)
 	flusher.Flush()
 
 	outChan, errChan := runner.RunHostCommand(step, false) // Use cliMode false for channel output
+
+	outputLines := 0
+	errorLines := 0
 
 	// Collect output and errors from channels and stream them
 	for outputLine := range outChan { // Normalize line endings
@@ -227,8 +367,10 @@ func runHostCommand(w http.ResponseWriter, step runner.HostCommandStep) {
 				escapedLine := strings.ReplaceAll(trimmed, "\n", "\\n")
 				if outputLine.IsError {
 					fmt.Fprintf(w, "event: stderr\ndata: %s\n\n", escapedLine)
+					errorLines++
 				} else {
 					fmt.Fprintf(w, "event: stdout\ndata: %s\n\n", escapedLine)
+					outputLines++
 				}
 			}
 		}
@@ -237,9 +379,22 @@ func runHostCommand(w http.ResponseWriter, step runner.HostCommandStep) {
 
 	// Check for errors after the command finishes
 	if err := <-errChan; err != nil {
+		logger.Error("Error during host command execution",
+			"command_name", step.Name,
+			"server_name", step.Target.ServerName,
+			"error", err,
+			"duration", time.Since(startTime))
+
 		escapedError := strings.ReplaceAll(err.Error(), "\n", "\\n")
 		fmt.Fprintf(w, "event: error\ndata: Error during step '%s': %s\n\n", step.Name, escapedError)
 		flusher.Flush()
+	} else {
+		logger.Info("Completed host command successfully",
+			"command_name", step.Name,
+			"server_name", step.Target.ServerName,
+			"output_lines", outputLines,
+			"error_lines", errorLines,
+			"duration", time.Since(startTime))
 	}
 
 	// Send a done event when the command is finished
@@ -247,57 +402,141 @@ func runHostCommand(w http.ResponseWriter, step runner.HostCommandStep) {
 	flusher.Flush()
 }
 
-// runStackUpHandler handles requests to run the 'up' sequence on a stack.
+// runStackUpHandler handles requests to start a stack.
 func runStackUpHandler(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
+	logger.Info("Received stack up request",
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.Header.Get("User-Agent"))
+
 	stack, err := getStackFromRequest(r)
 	if err != nil {
+		logger.Error("Failed to get stack info for stack up request",
+			"error", err,
+			"remote_addr", r.RemoteAddr)
 		http.Error(w, fmt.Sprintf("Error getting stack info: %v", err), http.StatusBadRequest)
 		return
 	}
+
+	logger.Info("Starting stack up operation",
+		"stack_name", stack.Name,
+		"server_name", stack.ServerName,
+		"is_remote", stack.IsRemote,
+		"stack_path", stack.Path)
 
 	sequence := runner.UpSequence(stack)
+
+	logger.Debug("Generated stack up sequence",
+		"stack_name", stack.Name,
+		"sequence_length", len(sequence),
+		"preparation_duration", time.Since(startTime))
+
 	runStackSequence(w, sequence) // Stream output
 }
 
-// runStackPullHandler handles requests to run the 'pull' sequence on a stack.
+// runStackPullHandler handles requests to pull images for a stack.
 func runStackPullHandler(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
+	logger.Info("Received stack pull request",
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.Header.Get("User-Agent"))
+
 	stack, err := getStackFromRequest(r)
 	if err != nil {
+		logger.Error("Failed to get stack info for stack pull request",
+			"error", err,
+			"remote_addr", r.RemoteAddr)
 		http.Error(w, fmt.Sprintf("Error getting stack info: %v", err), http.StatusBadRequest)
 		return
 	}
+
+	logger.Info("Starting stack pull operation",
+		"stack_name", stack.Name,
+		"server_name", stack.ServerName,
+		"is_remote", stack.IsRemote,
+		"stack_path", stack.Path)
 
 	sequence := runner.PullSequence(stack)
+
+	logger.Debug("Generated stack pull sequence",
+		"stack_name", stack.Name,
+		"sequence_length", len(sequence),
+		"preparation_duration", time.Since(startTime))
+
 	runStackSequence(w, sequence) // Stream output
 }
 
-// runStackDownHandler handles requests to run the 'down' sequence on a stack.
+// runStackDownHandler handles requests to stop a stack.
 func runStackDownHandler(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
+	logger.Info("Received stack down request",
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.Header.Get("User-Agent"))
+
 	stack, err := getStackFromRequest(r)
 	if err != nil {
+		logger.Error("Failed to get stack info for stack down request",
+			"error", err,
+			"remote_addr", r.RemoteAddr)
 		http.Error(w, fmt.Sprintf("Error getting stack info: %v", err), http.StatusBadRequest)
 		return
 	}
 
+	logger.Info("Starting stack down operation",
+		"stack_name", stack.Name,
+		"server_name", stack.ServerName,
+		"is_remote", stack.IsRemote,
+		"stack_path", stack.Path)
+
 	sequence := runner.DownSequence(stack)
+
+	logger.Debug("Generated stack down sequence",
+		"stack_name", stack.Name,
+		"sequence_length", len(sequence),
+		"preparation_duration", time.Since(startTime))
+
 	runStackSequence(w, sequence) // Stream output
 }
 
 // runStackRefreshHandler handles requests to run the 'refresh' sequence on a stack.
 func runStackRefreshHandler(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
+	logger.Info("Received stack refresh request",
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.Header.Get("User-Agent"))
+
 	stack, err := getStackFromRequest(r)
 	if err != nil {
+		logger.Error("Failed to get stack info for stack refresh request",
+			"error", err,
+			"remote_addr", r.RemoteAddr)
 		http.Error(w, fmt.Sprintf("Error getting stack info: %v", err), http.StatusBadRequest)
 		return
 	}
 
+	logger.Info("Starting stack refresh operation",
+		"stack_name", stack.Name,
+		"server_name", stack.ServerName,
+		"is_remote", stack.IsRemote,
+		"stack_path", stack.Path)
+
 	sequence := runner.RefreshSequence(stack)
+
+	logger.Debug("Generated stack refresh sequence",
+		"stack_name", stack.Name,
+		"sequence_length", len(sequence),
+		"preparation_duration", time.Since(startTime))
+
 	runStackSequence(w, sequence) // Stream output
 }
 
 // streamStackRefreshHandler handles GET requests to stream the 'refresh' sequence output on a stack.
 // streamStackRefreshHandler serves the GET /api/stream/stack/refresh endpoint, which
-// streams real-time output from the `podman-compose ps` command to check stack status.
+// streams real-time output from the `compose ps` command to check stack status.
 //
 // This handler uses Server-Sent Events (SSE) to provide a continuous stream of
 // command execution updates to the client, including command output and error messages.
@@ -313,11 +552,25 @@ func runStackRefreshHandler(w http.ResponseWriter, r *http.Request) {
 // - 404 Not Found if the stack or host doesn't exist
 // - 500 Internal Server Error if command execution fails
 func streamStackRefreshHandler(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
+	logger.Info("Received stream stack refresh request",
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.Header.Get("User-Agent"))
+
 	query := r.URL.Query()
 	stackName := query.Get("name")
 	serverName := query.Get("serverName")
 
+	logger.Debug("Parsing stream stack refresh query parameters",
+		"stack_name", stackName,
+		"server_name", serverName)
+
 	if stackName == "" || serverName == "" {
+		logger.Error("Missing required query parameters for stream stack refresh",
+			"stack_name", stackName,
+			"server_name", serverName,
+			"remote_addr", r.RemoteAddr)
 		http.Error(w, "Missing 'name' or 'serverName' query parameter", http.StatusBadRequest)
 		return
 	}
@@ -328,6 +581,9 @@ func streamStackRefreshHandler(w http.ResponseWriter, r *http.Request) {
 	if serverName == "local" {
 		rootDir, err := discovery.GetComposeRootDirectory()
 		if err != nil {
+			logger.Error("Failed to get local root directory for stream stack refresh",
+				"stack_name", stackName,
+				"error", err)
 			http.Error(w, fmt.Sprintf("Error getting local root directory: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -338,16 +594,35 @@ func streamStackRefreshHandler(w http.ResponseWriter, r *http.Request) {
 			ServerName: "local",
 			IsRemote:   false,
 		}
+
+		logger.Debug("Created local stack for stream refresh",
+			"stack_name", stackName,
+			"stack_path", stackPath)
 	} else {
 		// Get complete remote stack with AbsoluteRemoteRoot properly populated
+		logger.Debug("Looking up remote stack for stream refresh",
+			"stack_name", stackName,
+			"server_name", serverName)
+
 		completeStack, err := findRemoteStackByNameAndServer(stackName, serverName)
 		if err != nil {
+			logger.Error("Failed to find remote stack for stream refresh",
+				"stack_name", stackName,
+				"server_name", serverName,
+				"error", err)
 			http.Error(w, fmt.Sprintf("Error finding stack: %v", err), http.StatusNotFound)
 			return
 		}
 
 		stack = completeStack
 	}
+
+	logger.Info("Starting stream stack refresh operation",
+		"stack_name", stack.Name,
+		"server_name", stack.ServerName,
+		"is_remote", stack.IsRemote,
+		"stack_path", stack.Path,
+		"preparation_duration", time.Since(startTime))
 
 	sequence := runner.RefreshSequence(stack)
 	runStackSequence(w, sequence) // Stream output
@@ -358,7 +633,7 @@ func streamStackRefreshHandler(w http.ResponseWriter, r *http.Request) {
 //
 // This handler uses Server-Sent Events (SSE) to provide a continuous stream of
 // command execution updates to the client as the stack is being started. The stream
-// includes all output from `podman-compose up -d` and any related commands.
+// includes all output from the stack startup process.
 //
 // The connection remains open until:
 // - All commands complete successfully
@@ -375,11 +650,25 @@ func streamStackRefreshHandler(w http.ResponseWriter, r *http.Request) {
 // - 404 Not Found if the stack or host doesn't exist
 // - 500 Internal Server Error if command execution fails
 func streamStackUpHandler(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
+	logger.Info("Received stream stack up request",
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.Header.Get("User-Agent"))
+
 	query := r.URL.Query()
 	stackName := query.Get("name")
 	serverName := query.Get("serverName")
 
+	logger.Debug("Parsing stream stack up query parameters",
+		"stack_name", stackName,
+		"server_name", serverName)
+
 	if stackName == "" || serverName == "" {
+		logger.Error("Missing required query parameters for stream stack up",
+			"stack_name", stackName,
+			"server_name", serverName,
+			"remote_addr", r.RemoteAddr)
 		http.Error(w, "Missing 'name' or 'serverName' query parameter", http.StatusBadRequest)
 		return
 	}
@@ -390,6 +679,9 @@ func streamStackUpHandler(w http.ResponseWriter, r *http.Request) {
 	if serverName == "local" {
 		rootDir, err := discovery.GetComposeRootDirectory()
 		if err != nil {
+			logger.Error("Failed to get local root directory for stream stack up",
+				"stack_name", stackName,
+				"error", err)
 			http.Error(w, fmt.Sprintf("Error getting local root directory: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -400,10 +692,22 @@ func streamStackUpHandler(w http.ResponseWriter, r *http.Request) {
 			ServerName: "local",
 			IsRemote:   false,
 		}
+
+		logger.Debug("Created local stack for stream up",
+			"stack_name", stackName,
+			"stack_path", stackPath)
 	} else {
 		// Get complete remote stack with AbsoluteRemoteRoot properly populated
+		logger.Debug("Looking up remote stack for stream up",
+			"stack_name", stackName,
+			"server_name", serverName)
+
 		completeStack, err := findRemoteStackByNameAndServer(stackName, serverName)
 		if err != nil {
+			logger.Error("Failed to find remote stack for stream up",
+				"stack_name", stackName,
+				"server_name", serverName,
+				"error", err)
 			http.Error(w, fmt.Sprintf("Error finding stack: %v", err), http.StatusNotFound)
 			return
 		}
@@ -411,17 +715,24 @@ func streamStackUpHandler(w http.ResponseWriter, r *http.Request) {
 		stack = completeStack
 	}
 
+	logger.Info("Starting stream stack up operation",
+		"stack_name", stack.Name,
+		"server_name", stack.ServerName,
+		"is_remote", stack.IsRemote,
+		"stack_path", stack.Path,
+		"preparation_duration", time.Since(startTime))
+
 	sequence := runner.UpSequence(stack)
 	runStackSequence(w, sequence) // Stream output
 }
 
-// streamStackDownHandler handles GET requests to stream the 'down' sequence output on a stack.
+// streamStackDownHandler handles GET requests to stream output from stopping a stack.
 // streamStackDownHandler serves the GET /api/stream/stack/down endpoint, which
 // streams real-time output from the sequence of commands used to stop a stack.
 //
 // This handler uses Server-Sent Events (SSE) to provide a continuous stream of
 // command execution updates to the client as the stack is being stopped. The stream
-// includes all output from `podman-compose down` and any related commands.
+// includes all output from the stack shutdown process.
 //
 // The connection remains open until:
 // - All commands complete successfully
@@ -438,11 +749,25 @@ func streamStackUpHandler(w http.ResponseWriter, r *http.Request) {
 // - 404 Not Found if the stack or host doesn't exist
 // - 500 Internal Server Error if command execution fails
 func streamStackDownHandler(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
+	logger.Info("Received stream stack down request",
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.Header.Get("User-Agent"))
+
 	query := r.URL.Query()
 	stackName := query.Get("name")
 	serverName := query.Get("serverName")
 
+	logger.Debug("Parsing stream stack down query parameters",
+		"stack_name", stackName,
+		"server_name", serverName)
+
 	if stackName == "" || serverName == "" {
+		logger.Error("Missing required query parameters for stream stack down",
+			"stack_name", stackName,
+			"server_name", serverName,
+			"remote_addr", r.RemoteAddr)
 		http.Error(w, "Missing 'name' or 'serverName' query parameter", http.StatusBadRequest)
 		return
 	}
@@ -453,6 +778,9 @@ func streamStackDownHandler(w http.ResponseWriter, r *http.Request) {
 	if serverName == "local" {
 		rootDir, err := discovery.GetComposeRootDirectory()
 		if err != nil {
+			logger.Error("Failed to get local root directory for stream stack down",
+				"stack_name", stackName,
+				"error", err)
 			http.Error(w, fmt.Sprintf("Error getting local root directory: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -463,10 +791,22 @@ func streamStackDownHandler(w http.ResponseWriter, r *http.Request) {
 			ServerName: "local",
 			IsRemote:   false,
 		}
+
+		logger.Debug("Created local stack for stream down",
+			"stack_name", stackName,
+			"stack_path", stackPath)
 	} else {
 		// Get complete remote stack with AbsoluteRemoteRoot properly populated
+		logger.Debug("Looking up remote stack for stream down",
+			"stack_name", stackName,
+			"server_name", serverName)
+
 		completeStack, err := findRemoteStackByNameAndServer(stackName, serverName)
 		if err != nil {
+			logger.Error("Failed to find remote stack for stream down",
+				"stack_name", stackName,
+				"server_name", serverName,
+				"error", err)
 			http.Error(w, fmt.Sprintf("Error finding stack: %v", err), http.StatusNotFound)
 			return
 		}
@@ -474,18 +814,25 @@ func streamStackDownHandler(w http.ResponseWriter, r *http.Request) {
 		stack = completeStack
 	}
 
+	logger.Info("Starting stream stack down operation",
+		"stack_name", stack.Name,
+		"server_name", stack.ServerName,
+		"is_remote", stack.IsRemote,
+		"stack_path", stack.Path,
+		"preparation_duration", time.Since(startTime))
+
 	sequence := runner.DownSequence(stack)
 	runStackSequence(w, sequence) // Stream output
 }
 
-// streamStackPullHandler handles GET requests to stream the 'pull' sequence output on a stack.
+// streamStackPullHandler handles GET requests to stream output from pulling images for a stack.
 // streamStackPullHandler serves the GET /api/stream/stack/pull endpoint, which
 // streams real-time output from the sequence of commands used to pull updated
 // container images for a stack.
 //
 // This handler uses Server-Sent Events (SSE) to provide a continuous stream of
 // command execution updates to the client as images are being pulled. The stream
-// includes all output from `podman-compose pull` and any related commands.
+// includes all output from `compose pull` and any related commands.
 //
 // The connection remains open until:
 // - All commands complete successfully
@@ -502,11 +849,25 @@ func streamStackDownHandler(w http.ResponseWriter, r *http.Request) {
 // - 404 Not Found if the stack or host doesn't exist
 // - 500 Internal Server Error if command execution fails
 func streamStackPullHandler(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
+	logger.Info("Received stream stack pull request",
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.Header.Get("User-Agent"))
+
 	query := r.URL.Query()
 	stackName := query.Get("name")
 	serverName := query.Get("serverName")
 
+	logger.Debug("Parsing stream stack pull query parameters",
+		"stack_name", stackName,
+		"server_name", serverName)
+
 	if stackName == "" || serverName == "" {
+		logger.Error("Missing required query parameters for stream stack pull",
+			"stack_name", stackName,
+			"server_name", serverName,
+			"remote_addr", r.RemoteAddr)
 		http.Error(w, "Missing 'name' or 'serverName' query parameter", http.StatusBadRequest)
 		return
 	}
@@ -517,6 +878,9 @@ func streamStackPullHandler(w http.ResponseWriter, r *http.Request) {
 	if serverName == "local" {
 		rootDir, err := discovery.GetComposeRootDirectory()
 		if err != nil {
+			logger.Error("Failed to get local root directory for stream stack pull",
+				"stack_name", stackName,
+				"error", err)
 			http.Error(w, fmt.Sprintf("Error getting local root directory: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -527,10 +891,22 @@ func streamStackPullHandler(w http.ResponseWriter, r *http.Request) {
 			ServerName: "local",
 			IsRemote:   false,
 		}
+
+		logger.Debug("Created local stack for stream pull",
+			"stack_name", stackName,
+			"stack_path", stackPath)
 	} else {
 		// Get complete remote stack with AbsoluteRemoteRoot properly populated
+		logger.Debug("Looking up remote stack for stream pull",
+			"stack_name", stackName,
+			"server_name", serverName)
+
 		completeStack, err := findRemoteStackByNameAndServer(stackName, serverName)
 		if err != nil {
+			logger.Error("Failed to find remote stack for stream pull",
+				"stack_name", stackName,
+				"server_name", serverName,
+				"error", err)
 			http.Error(w, fmt.Sprintf("Error finding stack: %v", err), http.StatusNotFound)
 			return
 		}
@@ -538,13 +914,20 @@ func streamStackPullHandler(w http.ResponseWriter, r *http.Request) {
 		stack = completeStack
 	}
 
+	logger.Info("Starting stream stack pull operation",
+		"stack_name", stack.Name,
+		"server_name", stack.ServerName,
+		"is_remote", stack.IsRemote,
+		"stack_path", stack.Path,
+		"preparation_duration", time.Since(startTime))
+
 	sequence := runner.PullSequence(stack)
 	runStackSequence(w, sequence) // Stream output
 }
 
-// runHostPruneHandler handles requests to run the 'prune' action on a host.
+// runHostPruneHandler handles requests to clean up unused resources on a host.
 // runHostPruneHandler serves the POST /api/host/prune endpoint, which executes
-// the podman system prune command on a host to clean up unused resources.
+// the prune command on a host to clean up unused resources.
 //
 // This handler runs the prune command on either the local system or a remote SSH host
 // to remove unused containers, networks, images, and volumes. The output of the command
@@ -560,13 +943,32 @@ func streamStackPullHandler(w http.ResponseWriter, r *http.Request) {
 // - 404 Not Found if the host doesn't exist
 // - 500 Internal Server Error if command execution fails
 func runHostPruneHandler(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
+	logger.Info("Received host prune request",
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.Header.Get("User-Agent"))
+
 	target, err := getHostTargetFromRequest(r)
 	if err != nil {
+		logger.Error("Failed to get host info for host prune request",
+			"error", err,
+			"remote_addr", r.RemoteAddr)
 		http.Error(w, fmt.Sprintf("Error getting host info: %v", err), http.StatusBadRequest)
 		return
 	}
 
+	logger.Info("Starting host prune operation",
+		"server_name", target.ServerName,
+		"is_remote", target.IsRemote,
+		"preparation_duration", time.Since(startTime))
+
 	step := runner.PruneHostStep(target)
+
+	logger.Debug("Generated host prune step",
+		"server_name", target.ServerName,
+		"command_name", step.Name)
+
 	runHostCommand(w, step) // Stream output
 }
 

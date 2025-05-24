@@ -11,6 +11,7 @@ import (
 	"net/url"
 
 	"bucket-manager/internal/api"
+	"bucket-manager/internal/logger"
 	"bucket-manager/internal/web"
 
 	"github.com/gorilla/mux"
@@ -22,7 +23,7 @@ var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start the web server for Bucket Manager",
 	Long: `Starts an HTTP server that serves the Bucket Manager web UI and API.
-This provides a modern web interface for managing all your Podman Compose stacks
+This provides a modern web interface for managing all your compose stacks
 from any browser. The server runs on localhost by default and can be accessed
 at http://localhost:8080.
 
@@ -38,6 +39,9 @@ dev server running on localhost:3000 for live reloading.`,
 // It initializes the router, registers API endpoints, and serves either the embedded
 // Next.js web application or proxies to the dev server based on devMode.
 func runWebServer(devMode bool) {
+	// Initialize logger for web interface
+	logger.InitWeb(logger.LevelInfo)
+
 	// Note: SSH manager is already initialized in PersistentPreRunE of rootCmd
 
 	router := mux.NewRouter()

@@ -1,6 +1,6 @@
 # Bucket Manager Web UI
 
-The web UI for Bucket Manager, providing a modern graphical interface to manage Podman Compose stacks. This React-based application is embedded into the Go binary at build time to create a single, self-contained executable that includes the entire web interface.
+The web UI for Bucket Manager, providing a modern graphical interface to manage compose stacks. This React-based application is embedded into the Go binary at build time to create a single, self-contained executable that includes the entire web interface.
 
 ## Technology Stack
 

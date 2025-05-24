@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Bucket Manager",
-  description: "Manage your Podman Compose stacks",
+  description: "Manage your compose stacks",
   icons: {
     icon: '/favicon.svg',
     apple: '/apple-icon.svg',

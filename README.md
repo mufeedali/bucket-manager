@@ -1,6 +1,6 @@
 # 🪣 Bucket Manager (bm)
 
-**Bucket Manager** is a tool for managing Podman Compose stacks across local and remote machines. It offers three interfaces to fit your workflow: CLI for automation, TUI for interactive management, and a web interface for visual control.
+**Bucket Manager** is a tool for managing compose stacks across local and remote machines. It offers three interfaces to fit your workflow: CLI for automation, TUI for interactive management, and a web interface for visual control.
 
 ## Features
 
@@ -26,11 +26,9 @@
 
 ## Core Features
 
-- Manage Podman Compose stacks locally and on remote SSH hosts
-- Control stacks (up, down, pull, refresh) individually or in bulk
-- View real-time stack status (Up, Down, Partial, Error)
-- Configure SSH hosts for remote management
-- System cleanup with podman prune
+- Control stacks (start, stop, update, refresh) individually or in bulk
+- View current stack status (Up, Down, Partial, Error)
+- SSH support for remote management
 
 ## Stack Commands
 
@@ -42,7 +40,7 @@
 | `bm pull <stack>` | Pull latest images |
 | `bm refresh <stack>` | Full refresh (pull, down, up) |
 | `bm status [stack]` | Show status of all or specific stacks |
-| `bm prune [hosts]` | Clean up Docker resources |
+| `bm prune [hosts]` | Clean up unused resources |
 
 ## Stack Naming
 
@@ -56,7 +54,7 @@ Tab completion helps find the right names.
 
 ## Stack Discovery
 
-Bucket Manager automatically discovers Podman Compose stacks in the following locations:
+Bucket Manager automatically discovers compose stacks in the following locations:
 
 **Default Paths:**
 - **Local:** `~/bucket` or `~/compose-bucket`
@@ -66,7 +64,7 @@ Bucket Manager automatically discovers Podman Compose stacks in the following lo
 - **Local:** Use `bm config set-local-root <path>` to change the search directory
 - **Remote:** Configure per-host paths when adding hosts with `bm config ssh add` or `bm config ssh edit`
 
-All locations are searched for `compose.yaml` and `compose.yml` files.
+All locations are searched for `compose.yaml`, `compose.yml`, `docker-compose.yaml`, and `docker-compose.yml` files.
 
 ## Interfaces
 
@@ -100,6 +98,23 @@ bm completion fish > ~/.config/fish/completions/bm.fish
 ```
 
 For other shells, replace `fish` with `bash`, `zsh`, or `powershell` and the appropriate path.
+
+#### Container Runtime
+
+Bucket Manager supports both Podman (default) and Docker as container runtimes:
+
+```bash
+# Set runtime to Docker
+bm config set-runtime docker
+
+# Set runtime to Podman (default)
+bm config set-runtime podman
+
+# Check current runtime
+bm config get-runtime
+```
+
+The runtime affects all stack operations. Make sure your compose files are compatible with the chosen runtime.
 
 #### SSH Configuration
 

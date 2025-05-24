@@ -334,7 +334,7 @@ func (m *model) renderSshConfigListView() (string, string) {
 	if m.configCursor == 0 {
 		localCursor = cursorStyle.Render("> ")
 	}
-	bodyContent.WriteString(fmt.Sprintf("%s%s (%s)\n", localCursor, "local", serverNameStyle.Render("Local Podman")))
+	bodyContent.WriteString(fmt.Sprintf("%s%s (%s)\n", localCursor, "local", serverNameStyle.Render("Local")))
 
 	if len(m.configuredHosts) == 0 {
 		bodyContent.WriteString("\n  (No remote SSH hosts configured yet)")
@@ -453,7 +453,7 @@ func (m *model) renderPruneConfirmView() (string, string) {
 	bodyContent := strings.Builder{}
 	if len(m.hostsToPrune) > 0 {
 		targetName := m.hostsToPrune[0].ServerName // TUI currently only prunes one host
-		bodyContent.WriteString(fmt.Sprintf("Are you sure you want to run 'podman system prune -af' on host '%s'?\n\n", identifierColor.Render(targetName)))
+		bodyContent.WriteString(fmt.Sprintf("Are you sure you want to prune host '%s'?\n\n", identifierColor.Render(targetName)))
 		bodyContent.WriteString("This will remove all unused containers, networks, images, and build cache.\n\n")
 		bodyContent.WriteString("[y] Yes, prune | [n/Esc/b] No, cancel")
 	} else {

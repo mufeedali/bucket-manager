@@ -2,7 +2,7 @@
 // Copyright (c) 2025 Mufeed Ali
 
 // Package runner's local.go file implements functions for executing commands
-// on the local system. This includes running podman compose commands within stack
+// on the local system. This includes running compose commands within stack
 // directories and system-level commands like prune operations.
 
 package runner

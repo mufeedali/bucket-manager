@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
-// Package discovery provides functionality for finding Podman Compose stack directories
+// Package discovery provides functionality for finding compose stack directories
 // in both local and remote environments. It handles scanning directories,
 // detecting compose files, and determining stack status.
 package discovery
@@ -40,8 +40,8 @@ func InitSSHManager(manager *ssh.Manager) {
 	sshManager = manager
 }
 
-// Stack represents a discovered Podman Compose stack, which is a directory
-// containing compose files (docker-compose.yml, podman-compose.yml, etc.)
+// Stack represents a discovered compose stack, which is a directory
+// containing compose files (compose.yaml, compose.yml, docker-compose.yaml, docker-compose.yml, etc.)
 // The Stack can be either local or on a remote SSH host.
 type Stack struct {
 	Name               string          // Name of the stack (derived from directory name)
@@ -64,31 +64,50 @@ func (s Stack) Identifier() string {
 // GetComposeRootDirectory finds the root directory for local compose stacks,
 // checking config override first, then defaults.
 func GetComposeRootDirectory() (string, error) {
+	logger.Debug("Determining compose root directory")
+
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		logger.Errorf("Warning: could not load config to check local_root: %v", err)
+		logger.Warn("Could not load config to check local_root", "error", err)
 	} else if cfg.LocalRoot != "" {
+		logger.Debug("Using configured local root", "configured_path", cfg.LocalRoot)
+
 		localRootPath, resolveErr := config.ResolvePath(cfg.LocalRoot)
 		if resolveErr != nil {
-			logger.Errorf("Warning: could not resolve configured local_root path '%s': %v", cfg.LocalRoot, resolveErr)
+			logger.Warn("Could not resolve configured local_root path",
+				"configured_path", cfg.LocalRoot,
+				"error", resolveErr)
 			localRootPath = cfg.LocalRoot // Use original path for Stat check
 		}
 
 		info, statErr := os.Stat(localRootPath)
 		if statErr == nil && info.IsDir() {
+			logger.Info("Using configured local root directory",
+				"path", localRootPath,
+				"resolved_from", cfg.LocalRoot)
 			return localRootPath, nil
 		}
 
 		// If configured path is invalid, return an error. Do not fall back.
 		if statErr != nil {
+			logger.Error("Configured local_root is invalid",
+				"configured_path", cfg.LocalRoot,
+				"resolved_path", localRootPath,
+				"error", statErr)
 			return "", fmt.Errorf("configured local_root '%s' is invalid: %w", cfg.LocalRoot, statErr)
 		}
+		logger.Error("Configured local_root is not a directory",
+			"configured_path", cfg.LocalRoot,
+			"resolved_path", localRootPath)
 		return "", fmt.Errorf("configured local_root '%s' is not a directory", cfg.LocalRoot)
 	}
+
+	logger.Debug("No local root configured, checking default locations")
 
 	// Fallback to default locations
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
+		logger.Error("Could not get user home directory for default lookup", "error", err)
 		return "", fmt.Errorf("could not get user home directory for default lookup: %w", err)
 	}
 
@@ -97,20 +116,28 @@ func GetComposeRootDirectory() (string, error) {
 		filepath.Join(homeDir, "compose-bucket"),
 	}
 
+	logger.Debug("Checking default directories", "candidates", possibleDirs)
+
 	for _, dir := range possibleDirs {
 		info, err := os.Stat(dir)
 		if err == nil && info.IsDir() {
+			logger.Info("Using default local root directory", "path", dir)
 			return dir, nil
 		}
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			logger.Errorf("Warning: error checking default directory %s: %v", dir, err)
+			logger.Warn("Error checking default directory", "directory", dir, "error", err)
 		}
 	}
 
+	logger.Error("No valid local stack root directory found",
+		"checked_config", cfg.LocalRoot != "",
+		"checked_defaults", possibleDirs)
 	return "", fmt.Errorf("could not find a valid local stack root directory (checked config 'local_root' and defaults: ~/bucket, ~/compose-bucket)")
 }
 
 func FindStacks() (<-chan Stack, <-chan error, <-chan struct{}) {
+	logger.Info("Starting stack discovery")
+
 	stackChan := make(chan Stack, 10)
 	errorChan := make(chan error, 5)
 	doneChan := make(chan struct{})
@@ -118,10 +145,20 @@ func FindStacks() (<-chan Stack, <-chan error, <-chan struct{}) {
 
 	cfg, configErr := config.LoadConfig()
 	if configErr != nil {
+		logger.Error("Failed to load configuration for stack discovery", "error", configErr)
 		go func() {
 			errorChan <- fmt.Errorf("config load failed: %w", configErr)
 		}()
 	}
+
+	logger.Debug("Configuration loaded for discovery",
+		"ssh_host_count", func() int {
+			if cfg.SSHHosts == nil {
+				return 0
+			}
+			return len(cfg.SSHHosts)
+		}(),
+		"local_root_configured", cfg.LocalRoot != "")
 
 	numGoroutines := 1
 	if configErr == nil {
@@ -138,22 +175,36 @@ func FindStacks() (<-chan Stack, <-chan error, <-chan struct{}) {
 
 	go func() {
 		defer wg.Done()
+		logger.Debug("Starting local stack discovery")
+
 		localRootDir, err := GetComposeRootDirectory()
 		if err == nil {
+			logger.Debug("Local root directory found, searching for stacks", "root_dir", localRootDir)
+
 			localStacks, err := FindLocalStacks(localRootDir)
 			if err != nil {
+				logger.Error("Local stack discovery failed", "root_dir", localRootDir, "error", err)
 				errorChan <- fmt.Errorf("local discovery failed: %w", err)
 			} else {
+				logger.Info("Local stack discovery completed",
+					"root_dir", localRootDir,
+					"stack_count", len(localStacks))
 				for _, s := range localStacks {
+					logger.Debug("Local stack found", "stack_name", s.Name, "path", s.Path)
 					stackChan <- s
 				}
 			}
 		} else if !strings.Contains(err.Error(), "could not find") {
+			logger.Error("Local root directory check failed", "error", err)
 			errorChan <- fmt.Errorf("local root check failed: %w", err)
+		} else {
+			logger.Debug("No local root directory configured or found")
 		}
 	}()
 
 	if configErr == nil && len(cfg.SSHHosts) > 0 {
+		logger.Debug("Starting remote stack discovery", "host_count", len(cfg.SSHHosts))
+
 		sem := semaphore.NewWeighted(maxConcurrentDiscoveries)
 		ctx := context.Background()
 
@@ -162,7 +213,20 @@ func FindStacks() (<-chan Stack, <-chan error, <-chan struct{}) {
 			go func(hc config.SSHHost) {
 				defer wg.Done()
 
+				logger.Debug("Starting remote discovery for host",
+					"host_name", hc.Name,
+					"hostname", hc.Hostname,
+					"remote_root", hc.RemoteRoot,
+					"disabled", hc.Disabled)
+
+				if hc.Disabled {
+					logger.Debug("Skipping disabled host", "host_name", hc.Name)
+					return
+				}
+
 				if err := sem.Acquire(ctx, 1); err != nil {
+					logger.Error("Failed to acquire semaphore for remote discovery",
+						"host_name", hc.Name, "error", err)
 					errorChan <- fmt.Errorf("failed to acquire semaphore for %s: %w", hc.Name, err)
 					return
 				}
@@ -170,9 +234,21 @@ func FindStacks() (<-chan Stack, <-chan error, <-chan struct{}) {
 
 				remoteStacks, err := FindRemoteStacks(&hc)
 				if err != nil {
+					logger.Error("Remote stack discovery failed",
+						"host_name", hc.Name,
+						"hostname", hc.Hostname,
+						"error", err)
 					errorChan <- fmt.Errorf("remote discovery failed for %s: %w", hc.Name, err)
 				} else {
+					logger.Info("Remote stack discovery completed",
+						"host_name", hc.Name,
+						"hostname", hc.Hostname,
+						"stack_count", len(remoteStacks))
 					for _, s := range remoteStacks {
+						logger.Debug("Remote stack found",
+							"stack_name", s.Name,
+							"host_name", s.ServerName,
+							"path", s.Path)
 						stackChan <- s
 					}
 				}
@@ -199,15 +275,30 @@ func FindLocalStacks(rootDir string) ([]Stack, error) {
 		stackName := entry.Name()
 		stackPath := filepath.Join(rootDir, stackName)
 
-		// Check for both compose.yaml and compose.yml
-		composePathYaml := filepath.Join(stackPath, "compose.yaml")
-		composePathYml := filepath.Join(stackPath, "compose.yml")
+		// Check for common compose file names
+		composeFiles := []string{
+			"compose.yaml",
+			"compose.yml",
+			"docker-compose.yaml",
+			"docker-compose.yml",
+		}
 
-		_, errYaml := os.Stat(composePathYaml)
-		_, errYml := os.Stat(composePathYml)
+		hasComposeFile := false
+		var statErrors []error
 
-		// If either file exists, consider it a valid stack
-		if errYaml == nil || errYml == nil {
+		for _, composeFile := range composeFiles {
+			composePath := filepath.Join(stackPath, composeFile)
+			_, err := os.Stat(composePath)
+			if err == nil {
+				hasComposeFile = true
+				break
+			} else if !os.IsNotExist(err) {
+				statErrors = append(statErrors, err)
+			}
+		}
+
+		// If any compose file exists, consider it a valid stack
+		if hasComposeFile {
 			stacks = append(stacks, Stack{
 				Name:       stackName,
 				Path:       stackPath,
@@ -216,12 +307,10 @@ func FindLocalStacks(rootDir string) ([]Stack, error) {
 				HostConfig: nil,
 				// AbsoluteRemoteRoot is empty for local stacks
 			})
-		} else if !os.IsNotExist(errYaml) || !os.IsNotExist(errYml) {
-			if !os.IsNotExist(errYaml) {
-				logger.Errorf("Warning: could not stat compose files in local stack %s: %v", stackPath, errYaml)
-			} else if !os.IsNotExist(errYml) {
-				// If yaml was NotExist, but yml had a different error, report that.
-				logger.Errorf("Warning: could not stat compose files in local stack %s: %v", stackPath, errYml)
+		} else if len(statErrors) > 0 {
+			// Only log warnings if there were non-NotExist errors
+			for _, statErr := range statErrors {
+				logger.Errorf("Warning: could not stat compose files in local stack %s: %v", stackPath, statErr)
 			}
 		}
 	}
@@ -294,9 +383,9 @@ func FindRemoteStacks(hostConfig *config.SSHHost) ([]Stack, error) {
 	}
 	// CombinedOutput handles the session lifecycle for findSession.
 
-	// Command to find directories containing compose.y*ml one level deep using find (representing stack roots)
+	// Command to find directories containing any supported compose files one level deep using find (representing stack roots)
 	remoteFindCmd := fmt.Sprintf(
-		`find %s -maxdepth 2 -name 'compose.y*ml' -printf '%%h\\n' | sort -u`,
+		`find %s -maxdepth 2 \( -name 'compose.y*ml' -o -name 'docker-compose.y*ml' \) -printf '%%h\\n' | sort -u`,
 		util.QuoteArgForShell(absoluteRemoteRoot),
 	)
 

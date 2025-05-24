@@ -3,7 +3,7 @@
 
 // Package ui's commands.go file contains Bubble Tea commands that perform
 // asynchronous operations in the TUI. These commands handle long-running tasks
-// like discovering stacks, executing podman compose operations, and managing
+// like discovering stacks, executing compose operations, and managing
 // configurations without blocking the UI.
 
 package ui
