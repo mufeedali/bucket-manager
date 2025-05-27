@@ -14,15 +14,17 @@
 ## Quick Start
 
 1. **Install:**
-   ```bash
-   just install
-   ```
-   This installs the `bm` binary to `~/.local/bin/` (make sure this is in your `$PATH`). Actual path reference [here](https://docs.rs/dirs/latest/dirs/fn.executable_dir.html).
+
+    ```bash
+    just install
+    ```
+
+    This installs the `bm` binary to `~/.local/bin/` (make sure this is in your `$PATH`). Actual path reference [here](https://docs.rs/dirs/latest/dirs/fn.executable_dir.html).
 
 2. **Choose your interface:**
-   - **CLI:** `bm list`, `bm up my-stack`
-   - **TUI:** `bm` (with no arguments for interactive mode)
-   - **Web UI:** `bm serve` then visit http://localhost:8080
+    - **CLI:** `bm list`, `bm up my-stack`
+    - **TUI:** `bm` (with no arguments for interactive mode)
+    - **Web UI:** `bm serve` then visit http://localhost:8080
 
 ## Core Features
 
@@ -32,15 +34,15 @@
 
 ## Stack Commands
 
-| Command | Description |
-|---------|-------------|
-| `bm list` | List all stacks |
-| `bm up <stack>` | Start a stack |
-| `bm down <stack>` | Stop a stack |
-| `bm pull <stack>` | Pull latest images |
-| `bm refresh <stack>` | Full refresh (pull, down, up) |
-| `bm status [stack]` | Show status of all or specific stacks |
-| `bm prune [hosts]` | Clean up unused resources |
+| Command                         | Description                           |
+| ------------------------------- | ------------------------------------- |
+| `bm list`                       | List all stacks                       |
+| `bm up <stack> [stack...]`      | Start one or more stacks              |
+| `bm down <stack> [stack...]`    | Stop one or more stacks               |
+| `bm pull <stack> [stack...]`    | Pull latest images                    |
+| `bm refresh <stack> [stack...]` | Full refresh (pull, down, up)         |
+| `bm status [stack]`             | Show status of all or specific stacks |
+| `bm prune [hosts]`              | Clean up unused resources             |
 
 ## Stack Naming
 
@@ -57,10 +59,12 @@ Tab completion helps find the right names.
 Bucket Manager automatically discovers compose stacks in the following locations:
 
 **Default Paths:**
+
 - **Local:** `~/bucket` or `~/compose-bucket`
 - **Remote:** Same paths on configured SSH hosts
 
 **Custom Paths:**
+
 - **Local:** Use `bm config set-local-root <path>` to change the search directory
 - **Remote:** Configure per-host paths when adding hosts with `bm config ssh add` or `bm config ssh edit`
 
@@ -71,6 +75,7 @@ All locations are searched for `compose.yaml`, `compose.yml`, `docker-compose.ya
 ### Web Interface
 
 Run `bm serve` to start the web interface on http://localhost:8080, offering:
+
 - Modern graphical interface for stack management
 - Real-time status updates
 - Remote host configuration
@@ -79,6 +84,7 @@ Run `bm serve` to start the web interface on http://localhost:8080, offering:
 ### TUI
 
 The text interface (`bm` with no arguments) provides:
+
 - Interactive navigation with keyboard shortcuts
 - Multi-stack selection and operations
 - Real-time status updates
@@ -119,6 +125,7 @@ The runtime affects all stack operations. Make sure your compose files are compa
 #### SSH Configuration
 
 Manage remote hosts:
+
 - `bm config ssh list` - Show all hosts
 - `bm config ssh add` - Add a new host
 - `bm config ssh edit` - Edit an existing host
@@ -129,6 +136,9 @@ Manage remote hosts:
 ```bash
 # Start a local stack
 bm up myapp
+
+# Start multiple stacks at once
+bm up myapp frontend server1:api
 
 # Start a stack on a remote server
 bm up server1:api
@@ -141,6 +151,9 @@ bm status server1:
 
 # Complete refresh of a stack (pull, down, up)
 bm refresh myapp
+
+# Refresh multiple stacks at once
+bm refresh myapp frontend server1:api server2:database
 
 # Clean up Docker resources locally
 bm prune local

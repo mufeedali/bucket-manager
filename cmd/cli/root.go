@@ -164,10 +164,10 @@ var listCmd = &cobra.Command{
 }
 
 var upCmd = &cobra.Command{
-	Use:               "up <stack-identifier>",
-	Short:             "Start a stack",
-	Example:           "  bm up my-local-app\n  bm up server1:remote-app",
-	Args:              cobra.ExactArgs(1),
+	Use:               "up <stack-identifier> [stack-identifier...]",
+	Short:             "Start one or more stacks",
+	Example:           "  bm up my-local-app\n  bm up server1:remote-app\n  bm up app1 app2 server1:app3",
+	Args:              cobra.MinimumNArgs(1),
 	ValidArgsFunction: stackCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
 		runStackAction("up", args)
@@ -175,10 +175,10 @@ var upCmd = &cobra.Command{
 }
 
 var downCmd = &cobra.Command{
-	Use:               "down <stack-identifier>",
-	Short:             "Stop a stack",
-	Example:           "  bm down my-local-app\n  bm down server1:remote-app",
-	Args:              cobra.ExactArgs(1),
+	Use:               "down <stack-identifier> [stack-identifier...]",
+	Short:             "Stop one or more stacks",
+	Example:           "  bm down my-local-app\n  bm down server1:remote-app\n  bm down app1 app2 server1:app3",
+	Args:              cobra.MinimumNArgs(1),
 	ValidArgsFunction: stackCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
 		runStackAction("down", args)
@@ -186,11 +186,12 @@ var downCmd = &cobra.Command{
 }
 
 var refreshCmd = &cobra.Command{
-	Use:     "refresh <stack-identifier>",
-	Aliases: []string{"re"},
-	Short:   "Fully refresh a stack (alias: re)",
-	Long:    `Pulls latest images, stops the stack, and starts it again. Also cleans up unused resources on local stacks.`, Example: "  bm refresh my-local-app\n  bm re server1:remote-app",
-	Args:              cobra.ExactArgs(1),
+	Use:               "refresh <stack-identifier> [stack-identifier...]",
+	Aliases:           []string{"re"},
+	Short:             "Fully refresh one or more stacks (alias: re)",
+	Long:              `Pulls latest images, stops the stack, and starts it again. Also cleans up unused resources on local stacks.`,
+	Example:           "  bm refresh my-local-app\n  bm re server1:remote-app\n  bm refresh app1 app2 server1:app3",
+	Args:              cobra.MinimumNArgs(1),
 	ValidArgsFunction: stackCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
 		runStackAction("refresh", args)
@@ -198,10 +199,10 @@ var refreshCmd = &cobra.Command{
 }
 
 var pullCmd = &cobra.Command{
-	Use:               "pull <stack-identifier>",
-	Short:             "Pull latest images for a stack",
-	Example:           "  bm pull my-local-app\n  bm pull server1:remote-app",
-	Args:              cobra.ExactArgs(1),
+	Use:               "pull <stack-identifier> [stack-identifier...]",
+	Short:             "Pull latest images for one or more stacks",
+	Example:           "  bm pull my-local-app\n  bm pull server1:remote-app\n  bm pull app1 app2 server1:app3",
+	Args:              cobra.MinimumNArgs(1),
 	ValidArgsFunction: stackCompletionFunc,
 	Run: func(cmd *cobra.Command, args []string) {
 		runStackAction("pull", args)

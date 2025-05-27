@@ -118,6 +118,16 @@ func stackCompletionFunc(cmd *cobra.Command, args []string, toComplete string) (
 	var stacksToSearch []discovery.Stack
 	var discoveryErrors []error
 
+	// Create a set of already specified stacks to exclude from suggestions
+	alreadySpecified := make(map[string]struct{})
+	for _, arg := range args {
+		alreadySpecified[arg] = struct{}{}
+		// Also exclude just the stack name (without server prefix)
+		if parts := strings.SplitN(arg, ":", 2); len(parts) == 2 {
+			alreadySpecified[parts[1]] = struct{}{}
+		}
+	}
+
 	targetServer := ""
 	targetStack := toComplete
 	hasColon := strings.Contains(toComplete, ":")
@@ -148,8 +158,11 @@ func stackCompletionFunc(cmd *cobra.Command, args []string, toComplete string) (
 			for _, s := range localStacks {
 				// Only check stack name for prefix match when no server is specified
 				if strings.HasPrefix(s.Name, targetStack) {
-					suggestionMap[s.Name] = struct{}{} // Add the plain name
-					localMatchFound = true
+					// Don't suggest if already specified
+					if _, exists := alreadySpecified[s.Name]; !exists {
+						suggestionMap[s.Name] = struct{}{} // Add the plain name
+						localMatchFound = true
+					}
 				}
 			}
 		}
@@ -174,6 +187,14 @@ func stackCompletionFunc(cmd *cobra.Command, args []string, toComplete string) (
 	for _, s := range stacksToSearch {
 		identifier := s.Identifier() // e.g., "local:stack" or "remote:stack"
 		name := s.Name               // e.g., "stack"
+
+		// Skip if already specified
+		if _, exists := alreadySpecified[identifier]; exists {
+			continue
+		}
+		if _, exists := alreadySpecified[name]; exists {
+			continue
+		}
 
 		// If completing a full identifier (e.g., "remote:st")
 		if hasColon && strings.HasPrefix(identifier, toComplete) {

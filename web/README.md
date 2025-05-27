@@ -27,9 +27,10 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 The web UI is embedded into the Go binary during build:
 
 When `just build-web` or `just install` is run:
-   - Web UI is built with `bun run build`
-   - Build output is copied to `internal/web/assets` in the main project
-   - Go binary embeds these assets and serves them via `bm serve` command
+
+- Web UI is built with `bun run build`
+- Build output is copied to `internal/web/assets` in the main project
+- Go binary embeds these assets and serves them via `bm serve` command
 
 ## Production Use
 
