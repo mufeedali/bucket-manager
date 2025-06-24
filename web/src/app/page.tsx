@@ -18,7 +18,7 @@ export default function Home() {
         <StackList />
       </main>
       <footer className="bg-background py-4 px-6 text-center text-sm text-muted-foreground">
-        &copy; 2024 Bucket Manager
+        &copy; 2025 Bucket Manager
       </footer>
     </div>
   );

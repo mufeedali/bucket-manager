@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Mufeed Ali
 
-// Package cli's config_ssh.go file implements CLI commands for managing SSH host
+// Package cli's config_hosts.go file implements CLI commands for managing SSH host
 // configurations. It provides interactive commands for adding, listing, editing,
 // removing, and importing SSH hosts.
 
@@ -19,15 +19,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// sshCmd is the parent command for SSH-specific configuration subcommands
-var sshCmd = &cobra.Command{
-	Use:   "ssh",
+// hostsCmd is the parent command for SSH-specific configuration subcommands
+var hostsCmd = &cobra.Command{
+	Use:   "hosts",
 	Short: "Manage SSH host configurations",
 	Long: `Add, list, edit, remove, or import SSH host configurations used by bucket-manager.
 These configurations are used to connect to remote hosts for stack discovery and management.`,
 }
 
-var sshListCmd = &cobra.Command{
+var hostsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List configured SSH hosts",
 	Run: func(cmd *cobra.Command, args []string) {
@@ -115,7 +115,7 @@ func promptForNewHostDetails(existingHosts []config.SSHHost) (config.SSHHost, er
 	return newHost, nil
 }
 
-var sshAddCmd = &cobra.Command{
+var hostsAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a new SSH host configuration interactively",
 	Run: func(cmd *cobra.Command, args []string) {
@@ -219,7 +219,7 @@ func promptForEditedHostDetails(originalHost config.SSHHost, allHosts []config.S
 	return editedHost, nil
 }
 
-var sshEditCmd = &cobra.Command{
+var hostsEditCmd = &cobra.Command{
 	Use:   "edit",
 	Short: "Edit an existing SSH host configuration interactively",
 	Run: func(cmd *cobra.Command, args []string) {
@@ -268,7 +268,7 @@ var sshEditCmd = &cobra.Command{
 	},
 }
 
-var sshRemoveCmd = &cobra.Command{
+var hostsRemoveCmd = &cobra.Command{
 	Use:   "remove",
 	Short: "Remove an SSH host configuration interactively",
 	Run: func(cmd *cobra.Command, args []string) {
@@ -432,7 +432,7 @@ func configureAndConvertImportedHost(pHost config.PotentialHost, currentConfigNa
 	return &bmHost, nil
 }
 
-var sshImportCmd = &cobra.Command{
+var hostsImportCmd = &cobra.Command{
 	Use:   "import",
 	Short: "Import hosts from ~/.ssh/config interactively",
 	Run: func(cmd *cobra.Command, args []string) {
@@ -500,13 +500,13 @@ var sshImportCmd = &cobra.Command{
 }
 
 func init() {
-	sshCmd.AddCommand(sshListCmd)
-	sshCmd.AddCommand(sshAddCmd)
-	sshCmd.AddCommand(sshEditCmd)
-	sshCmd.AddCommand(sshRemoveCmd)
-	sshCmd.AddCommand(sshImportCmd)
+	hostsCmd.AddCommand(hostsListCmd)
+	hostsCmd.AddCommand(hostsAddCmd)
+	hostsCmd.AddCommand(hostsEditCmd)
+	hostsCmd.AddCommand(hostsRemoveCmd)
+	hostsCmd.AddCommand(hostsImportCmd)
 
-	configCmd.AddCommand(sshCmd)
+	configCmd.AddCommand(hostsCmd)
 }
 
 var reader = bufio.NewReader(os.Stdin)
