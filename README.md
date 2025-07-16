@@ -1,3 +1,32 @@
+# NOT INTENDED FOR GENERAL USE
+
+> [!CAUTION]
+> This project is not actively maintained anymore.
+
+> [!WARNING]
+> Contains significant amounts of **AI-generated code**. Even the README is generated.
+
+# Maintenance and Current State
+
+**Not actively maintained** since I'm switching to Quadlets instead of the `compose`-based configuration I was making use of when working on this. I was already using Podman, so the switch makes a lot of sense for me.
+
+The application is **incomplete** but it did work well enough for my use cases. What exists in this repository right now was intended to serve as a prototype and I intended to rewrite it by hand, either entirely or mostly, once I had some implementation details thought out well enough.
+
+For anyone interested enough, here's some of the stuff I was experimenting with here:
+
+- **Go**: Go, as a whole, is pretty new to me.
+- **GoReleaser and svu**: Liked it. But I think my conclusion is that Semantic Versioning and Conventional Commits aren't great for anything that's not a library.
+- **Single binary with embedded FS**: I like the idea of a single binary that can serve as the web server, the TUI, and the CLI. It worked pretty well. I especially like how easy Go makes it to embed content (like my Next.js frontend).
+- **Improved developer workflows**: Just some stuff to make development on an application like this easier. Refer to the `justfile` if interested.
+
+Where I planned for this to go:
+
+- Remove the TUI. It was pretty buggy and never quite worked the way I wanted it to. Moreover, I almost always preferred to use the CLI anyway.
+- Separate `Hosts` and `Buckets` into two different sets of configuration since there can technically be multiple buckets on a host and it's just a neater logical separation.
+    - This would have been an opportunity to rewrite it.
+- Complete the web UI and API. It's currently in a very incomplete state.
+- Package as a container.
+
 # 🪣 Bucket Manager (bm)
 
 **Bucket Manager** is a tool for managing compose stacks across local and remote machines. It offers three interfaces to fit your workflow: CLI for automation, TUI for interactive management, and a web interface for visual control.
